@@ -1,11 +1,7 @@
-body {
+.body {
 	/* padding: 50px;
 	background: #3c3b38;
 	background: #eaebeb; */
-}
-
-summary {
-	outline: none;
 }
 
 .portrait-img {
