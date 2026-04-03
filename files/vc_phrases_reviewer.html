@@ -2326,7 +2326,7 @@
           });
           // Auto-hide after a delay, or on next click
           clearTimeout(_infoTipTimer);
-          _infoTipTimer = setTimeout(hideInfoTip, 5000);
+          _infoTipTimer = setTimeout(hideInfoTip, 15000);
           // Close on next outside click
           setTimeout(() => {
             document.addEventListener('mousedown', _infoTipOutsideClick, { once: true });
