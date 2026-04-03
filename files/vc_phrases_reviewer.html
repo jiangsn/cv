@@ -1,0 +1,3415 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phrase Reviewer</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --line: #d7deea;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --warn: #dc2626;
+      --warn-soft: #fee2e2;
+      --good: #059669;
+      --good-soft: #d1fae5;
+      --chip: #eef2ff;
+      --chip-selected: #c7d2fe;
+      --drop: #eff6ff;
+      --shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+      --cell-gap: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    .app {
+      max-width: 1800px;
+      margin: 0 auto;
+      padding: 8px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 10px;
+      margin-bottom: 8px;
+    }
+
+    .sticky-top {
+      position: static;
+      top: auto;
+      z-index: auto;
+      background: transparent;
+      backdrop-filter: none;
+      padding-top: 0;
+    }
+
+    .filter-floating-spacer {
+      height: 0;
+    }
+
+    .filter-panel {
+      position: static;
+      transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease;
+      will-change: transform, opacity;
+      backface-visibility: hidden;
+    }
+
+    .filter-panel.floating {
+      position: fixed;
+      top: 8px;
+      left: 50%;
+      transform: translate3d(-50%, 0, 0);
+      width: min(calc(100vw - 16px), 1784px);
+      z-index: 45;
+      margin: 0;
+    }
+
+    .filter-panel.floating.hidden {
+      transform: translate3d(-50%, calc(-100% - 16px), 0);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .toolbar-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .toolbar-grid.cols-5 {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .field label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #fff;
+    }
+
+    .field textarea {
+      min-height: 70px;
+      resize: vertical;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .btn:hover {
+      border-color: var(--accent);
+    }
+
+    .btn.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .btn.danger {
+      background: var(--warn-soft);
+      color: var(--warn);
+      border-color: #fecaca;
+    }
+
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      padding: 0;
+    }
+
+    .toolbar-compact {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .preview-modal {
+      width: min(96vw, 1100px);
+      max-height: 92vh;
+      overflow: auto;
+    }
+
+    .preview-image-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .preview-image-wrap img {
+      width: 100%;
+      max-height: 78vh;
+      object-fit: contain;
+      background: #f8fafc;
+      border-radius: 12px;
+      border: 1px solid #eef2f7;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .status {
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 8px;
+    }
+
+    .status.info {
+      background: var(--accent-soft);
+      color: #1d4ed8;
+    }
+
+    .status.warn {
+      background: #fff7ed;
+      color: #c2410c;
+    }
+
+    .status.good {
+      background: var(--good-soft);
+      color: var(--good);
+    }
+
+    .grid-head {
+      display: grid;
+      grid-template-columns: 360px 0.82fr 1.58fr;
+      gap: var(--cell-gap);
+      padding: 0 12px 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .pair-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 10px;
+      margin-bottom: 8px;
+      content-visibility: auto;
+      contain-intrinsic-size: auto 520px;
+      contain: layout style paint;
+    }
+
+    .pair-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .side-row {
+      display: grid;
+      grid-template-columns: 360px 0.82fr 1.58fr;
+      gap: 10px;
+      align-items: stretch;
+      padding: 6px 0 6px 8px;
+      border-top: 1px solid #eef2f7;
+      border-left: 8px solid transparent;
+      border-radius: 10px;
+    }
+
+    .side-row:first-of-type {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .side-row.more {
+      border-left-color: #fca5a5;
+      background: #fff5f5;
+    }
+
+    .side-row.less {
+      border-left-color: #86efac;
+      background: #f3fff6;
+    }
+
+    .image-box {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 6px;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 160px;
+    }
+
+    .image-box img {
+      width: 100%;
+      height: 225px;
+      object-fit: contain;
+      background: #f8fafc;
+      border-radius: 8px;
+      border: 1px solid #eef2f7;
+      cursor: zoom-in;
+    }
+
+    .image-name {
+      font-size: 12px;
+      font-weight: 600;
+      word-break: break-all;
+    }
+
+    .reason-box,
+    .phrases-box {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      min-height: 170px;
+      padding: 8px;
+      overflow-y: auto;
+    }
+
+    .reason-box {
+      line-height: 1.8;
+      white-space: pre-wrap;
+      font-size: 15px;
+      overflow-x: hidden;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      min-width: 0;
+    }
+
+    .reason-box.active-drop {
+      outline: 2px dashed var(--accent);
+      background: #f8fbff;
+    }
+
+    .reason-box {
+      position: relative;
+      cursor: text;
+    }
+
+    .reason-phrase {
+      position: relative;
+      display: inline;
+      max-width: 100%;
+      background: var(--phrase-bg, #fde68a);
+      border: 2px solid transparent;
+      border-radius: 4px;
+      padding: 0 2px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+      transition: border-color 0.1s ease;
+      will-change: border-color;
+    }
+
+    .reason-phrase.is-hovered {
+      border-style: dashed;
+      border-color: var(--phrase-border, #64748b);
+    }
+
+    .reason-phrase.is-selected {
+      border-style: solid;
+      border-color: var(--phrase-border, #334155);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+    }
+
+    .reason-phrase.is-active-occurrence {
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 0 0 1px rgba(15, 23, 42, 0.06);
+    }
+
+    .boundary-handle {
+      display: inline-block;
+      width: 7px;
+      height: 1.05em;
+      vertical-align: -0.18em;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid var(--phrase-border, #334155);
+      margin: 0 2px;
+      cursor: ew-resize;
+      user-select: none;
+    }
+
+    .phrases-box {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .phrases-copy-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 24px;
+      height: 24px;
+      border-radius: 8px;
+      padding: 0;
+      font-size: 13px;
+      line-height: 1;
+      z-index: 2;
+      transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+    }
+
+    .phrases-copy-btn.copied {
+      background: #dcfce7;
+      color: #166534;
+      border-color: #86efac;
+      transform: scale(1.04);
+    }
+
+    .topic-block {
+      border: 1px solid #edf2f7;
+      border-radius: 10px;
+      padding: 6px 8px;
+      background: #fcfdff;
+    }
+
+    .topic-name {
+      font-weight: 700;
+      margin-bottom: 5px;
+      font-size: 13px;
+    }
+
+    .subtopic-row {
+      display: grid;
+      grid-template-columns: 210px 1fr;
+      gap: 8px;
+      align-items: start;
+      padding: 2px 0;
+      border-radius: 8px;
+    }
+
+    .subtopic-row.drop-hover {
+      background: var(--drop);
+      outline: 2px dashed #93c5fd;
+    }
+
+    .subtopic-name {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+      padding-top: 4px;
+      word-break: break-word;
+    }
+
+    .chips-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 24px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background: var(--chip);
+      cursor: grab;
+      max-width: 100%;
+      user-select: none;
+      -webkit-user-drag: element;
+      transition: border-color 0.12s ease, box-shadow 0.12s ease;
+      will-change: border-color, box-shadow;
+      contain: layout style;
+    }
+
+    .chip:active {
+      cursor: grabbing;
+    }
+
+    .chip.dragging {
+      opacity: 0.58;
+      cursor: grabbing;
+    }
+
+    .chip.hovered {
+      border-style: dashed;
+      border-color: var(--phrase-border, #64748b);
+    }
+
+    .chip.selected {
+      border-style: solid;
+      border-color: var(--phrase-border, #334155);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+    }
+
+    .chip.invalid {
+      border-color: #f87171;
+      background: #fff1f2 !important;
+      color: #9f1239;
+    }
+
+    .chip.editing {
+      padding: 2px 6px;
+      background: #fff;
+    }
+
+    .chip-text {
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .chip input {
+      border: none;
+      outline: none;
+      background: transparent;
+      min-width: 120px;
+      width: 220px;
+      font-size: 13px;
+    }
+
+    .chip-mini {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .plus-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+      align-items: center;
+    }
+
+    .drop-plus {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      border: 1px dashed #93c5fd;
+      background: #f8fbff;
+      color: var(--accent);
+      font-weight: 700;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .drop-plus.drop-hover {
+      background: var(--drop);
+      outline: 2px dashed #93c5fd;
+    }
+
+    .top-level-add {
+      margin-top: 8px;
+    }
+
+    .modal-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.36);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 70;
+      padding: 16px;
+    }
+
+
+    .context-menu-mask {
+      position: fixed;
+      inset: 0;
+      z-index: 109;
+      background: transparent;
+    }
+
+    .context-menu {
+      position: fixed;
+      z-index: 110;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+      padding: 8px;
+      min-width: min(480px, calc(100vw - 16px));
+      max-width: min(92vw, 560px);
+    }
+
+    .context-menu-columns {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+      gap: 8px;
+    }
+
+    .context-menu-col {
+      min-width: 0;
+      max-height: 52vh;
+      overflow: auto;
+    }
+
+    .context-menu-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 0 0 6px;
+      padding: 0 4px;
+    }
+
+    .context-menu-item {
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      background: #fff;
+      border-radius: 10px;
+      padding: 8px 10px;
+      cursor: pointer;
+      margin-bottom: 4px;
+    }
+
+    .context-menu-item:hover,
+    .context-menu-item.active {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+    }
+
+    .context-menu-meta {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 0 4px 6px;
+    }
+
+    .modal {
+      width: min(560px, 100%);
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+      padding: 16px;
+    }
+
+    .modal h3 {
+      margin: 0 0 12px;
+    }
+
+    .modal .row {
+      margin-top: 8px;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .footer-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .help-fab {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 52;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 10px 14px;
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+    }
+
+    .help-fab .help-fab-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .help-modal {
+      width: min(980px, 100%);
+      max-height: 92vh;
+      overflow: auto;
+    }
+
+    .help-doc {
+      display: grid;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .help-topic-card {
+      border: 1px solid #e5ebf5;
+      border-radius: 14px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+
+    .help-topic-card h4 {
+      margin: 0 0 6px;
+      font-size: 17px;
+    }
+
+    .help-topic-def {
+      margin: 0;
+      color: #334155;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+
+    .help-subtopic-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .help-subtopic-item {
+      border-top: 1px solid #edf2f7;
+      padding-top: 10px;
+    }
+
+    .help-subtopic-item:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .help-subtopic-title {
+      font-weight: 700;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .help-subtopic-def {
+      margin: 0;
+      color: #475569;
+      line-height: 1.5;
+      font-size: 14px;
+    }
+
+    .help-example {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    /* ── Toggle switch ─────────────────────────────────── */
+    .toggle-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .toggle-field label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 38px;
+    }
+
+    .toggle-track {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      border-radius: 999px;
+      background: #cbd5e1;
+      cursor: pointer;
+      transition: background 0.18s ease;
+      flex-shrink: 0;
+    }
+
+    .toggle-track.on {
+      background: var(--accent);
+    }
+
+    .toggle-knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+      transition: transform 0.18s ease;
+    }
+
+    .toggle-track.on .toggle-knob {
+      transform: translateX(18px);
+    }
+
+    .toggle-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      user-select: none;
+    }
+
+    /* ── Phrase tooltip ───────────────────────────────── */
+    .phrase-tooltip {
+      position: fixed;
+      z-index: 120;
+      pointer-events: none;
+      background: #1e293b;
+      color: #f1f5f9;
+      font-size: 12px;
+      line-height: 1.4;
+      border-radius: 8px;
+      padding: 5px 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      white-space: nowrap;
+      max-width: 420px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0;
+      transition: opacity 0.1s ease;
+    }
+
+    .phrase-tooltip.visible {
+      opacity: 1;
+    }
+
+    .phrase-tooltip .tt-topic {
+      font-weight: 700;
+      color: #93c5fd;
+    }
+
+    .phrase-tooltip .tt-sep {
+      margin: 0 5px;
+      color: #64748b;
+    }
+
+    .phrase-tooltip .tt-sub {
+      color: #e2e8f0;
+    }
+
+    /* ── Hide-phrases 2-column layout ─────────────────── */
+    .grid-head.no-phrases,
+    .side-row.no-phrases {
+      grid-template-columns: 360px 1fr;
+    }
+
+    @media (max-width: 1400px) {
+
+      .grid-head,
+      .side-row {
+        grid-template-columns: 300px 0.9fr 1.45fr;
+      }
+
+      .grid-head.no-phrases,
+      .side-row.no-phrases {
+        grid-template-columns: 300px 1fr;
+      }
+
+      .subtopic-row {
+        grid-template-columns: 180px 1fr;
+      }
+    }
+
+    @media (max-width: 1100px) {
+      .grid-head {
+        display: none;
+      }
+
+      .side-row {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar-grid,
+      .toolbar-grid.cols-5 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .subtopic-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app"></div>
+
+  <script>
+    const { createApp, reactive, computed, watch, nextTick, ref, onMounted, onBeforeUnmount } = Vue;
+
+    const TOPIC_META = {
+      "Data Density / Image Clutter": [
+        "Information Volume",
+        "Element Quantity",
+        "Visual Clutter & Overlap",
+        "Others",
+      ],
+      "Visual Encoding Clarity": [
+        "Graphical Forms & Primitives",
+        "Position, Scale & Organization",
+        "Encoding Interpretability",
+        "Others",
+      ],
+      "Semantics / Text Legibility": [
+        "Annotations & Labels",
+        "Text Volume & Content",
+        "Typography & Readability",
+        "Others",
+      ],
+      "Schema": [
+        "Domain Familiarity",
+        "Dimensionality & Structure",
+        "Abstraction Level",
+        "Others",
+      ],
+      "Color, Symbol, and Texture Details": [
+        "Color Palette & Contrast",
+        "Symbols & Texture",
+        "Others",
+      ],
+      "Aesthetics Uncertainty": [
+        "Visual Disorganization",
+        "Perceptual Ambiguity",
+        "Others",
+      ],
+      "Immediacy / Cognitive Load": [
+        "Interpretive Difficulty",
+        "Semantic Clarity",
+        "Processing Time & Effort",
+        "Others",
+      ],
+      "Others": ["Others"],
+    };
+
+
+    const HELP_DOC = [
+      {
+        topic: "Data Density / Image Clutter",
+        definition: "The degree to which visual elements crowd the scene, affecting how easily observers can notice new or salient items without interference.",
+        subtopics: [
+          {
+            name: "Information Volume",
+            definition: "The perceived amount, richness, or depth of data content in the image — ranging from sparse/simple to dense/layered information.",
+            examples: "much/little data/info; more parameters/variables",
+          },
+          {
+            name: "Element Quantity",
+            definition: "The number of discrete graphical elements (points, lines, bars, shapes, subplots) present in the image.",
+            examples: "more charts/points/lines/shapes/elements; scattered shapes (e.g., dots, squares, pictures)",
+          },
+          {
+            name: "Visual Clutter & Overlap",
+            definition: "Spatial density, overlapping elements, layout congestion, and use (or lack) of whitespace.",
+            examples: "overlapping shapes/colors/lines; more regions/space",
+          },
+        ],
+      },
+      {
+        topic: "Visual Encoding Clarity",
+        definition: "The degree to which observers can clearly interpret the mappings between visual marks (shape, size, position) and the data they represent. This excludes color encodings, texture cues, and text annotations.",
+        subtopics: [
+          {
+            name: "Graphical Forms & Primitives",
+            definition: "The variety, type, and physical attributes of shapes, lines, and mark types used to encode data — including size, thickness, curvature, and regularity of forms.",
+            examples: "shapes and lines; shape variation; shape size; random-like shapes; simple visual elements; several elements",
+          },
+          {
+            name: "Position, Scale & Organization",
+            definition: "Spatial layout, alignment, ordering, scale consistency, and structural organization of visual encodings.",
+            examples: "scale difference; shape position; ordered; less organized elements",
+          },
+          {
+            name: "Encoding Interpretability",
+            definition: "Whether visual encodings convey clear, decodable meaning — including recognizability of marks, design-data correspondence, and ease of identifying data features.",
+            examples: "clear colors/shapes; understand/read shapes; design-data relationship",
+          },
+        ],
+      },
+      {
+        topic: "Semantics / Text Legibility",
+        definition: "The degree to which observers can read and understand labels, legends, axes, numbers, and text, and use them to interpret the visualization.",
+        subtopics: [
+          {
+            name: "Annotations & Labels",
+            definition: "Presence, clarity, and sufficiency of titles, axis labels, legends, captions, and measurement references.",
+            examples: "labels/axes/legends; more labels/context; clear text/scale/information",
+          },
+          {
+            name: "Text Volume & Content",
+            definition: "The quantity of text, numbers, or contextual descriptions present in the image.",
+            examples: "amount of words/context/numbers; little/less text/numbers/context",
+          },
+          {
+            name: "Typography & Readability",
+            definition: "Font size, rotation, structure, spatial arrangement, and visual clarity of text elements.",
+            examples: "word rotation/small font size; clear text arrangement/density",
+          },
+        ],
+      },
+      {
+        topic: "Schema",
+        definition: "The degree to which observers immediately recognize common visual forms—such as familiar layouts, textures, map shapes, or diagram types—making interpretation easier.",
+        subtopics: [
+          {
+            name: "Domain Familiarity",
+            definition: "Whether the image requires specialized domain knowledge (e.g., chemistry, biology, geography) or uses unfamiliar or specialized representational conventions.",
+            examples: "domain-specific concepts (e.g., chemical, biology, map)",
+          },
+          {
+            name: "Dimensionality & Structure",
+            definition: "Spatial dimensionality (2D vs 3D), layout organization, and the structural framework of the visualization.",
+            examples: "2D/3D",
+          },
+          {
+            name: "Abstraction Level",
+            definition: "Use of non-representational, abstract visual forms that lack familiar real-world referents.",
+            examples: "abstract shapes or colors",
+          },
+        ],
+      },
+      {
+        topic: "Color, Symbol, and Texture Details",
+        definition: "The degree to which observers perceive and understand fine-grained color variations, symbol compositions, 3D cues, or textured regions in the visualization.",
+        subtopics: [
+          {
+            name: "Color Palette & Contrast",
+            definition: "The range, variety, and arrangement of colors used — including gradients, hues, saturation, color schemes — and whether colors are visually distinguishable and provide clear separation, contrast, and background effects.",
+            examples: "color variety/shading; two colors; monochrome; bright colors; inadequate/few coloring; color contrast/clarity; distinguishable/full/highly contrast color uses; distinguishable color variety/arrangement/distribution; soft/layered/overlapping colors; blurry colors/images; white/black background / other background",
+          },
+          {
+            name: "Symbols & Texture",
+            definition: "Non-color graphical markers, textures, icons, and patterned visual elements used alongside or instead of color.",
+            examples: "symbols",
+          },
+        ],
+      },
+      {
+        topic: "Aesthetics Uncertainty",
+        definition: "The degree of uncertainty or discomfort observers feel when visual style, color harmony, or structure makes interpretation unclear or unstable.",
+        subtopics: [
+          {
+            name: "Visual Disorganization",
+            definition: "Whether the image feels random, messy, distracting, inconsistent, overwhelming, or lacking coherent structure.",
+            examples: "distracting/confusing/unclear",
+          },
+          {
+            name: "Perceptual Ambiguity",
+            definition: "Uncertainty in perceiving specific visual attributes like color and contrast, leading to aesthetic confusion.",
+            examples: "unclear colors/contrast",
+          },
+        ],
+      },
+      {
+        topic: "Immediacy / Cognitive Load",
+        definition: "The effect on observers in terms of mental effort, including the time and cognitive resources needed to inspect, compare, or make sense of the visualization. This reflects the viewer’s experience, not the cause.",
+        subtopics: [
+          {
+            name: "Interpretive Difficulty",
+            definition: "Overall subjective ease or difficulty of interpreting, reading, understanding, or differentiating the visualization.",
+            examples: "easy/hard to interpret; more difficult to focus/follow",
+          },
+          {
+            name: "Semantic Clarity",
+            definition: "Whether the visualization conveys an unambiguous, understandable message about what the data represents.",
+            examples: "unclear meaning/confusing",
+          },
+          {
+            name: "Processing Time & Effort",
+            definition: "The time, cognitive effort, or specialized knowledge needed to process and analyze the visualization.",
+            examples: "take longer to interpret; read/analyze many figures/items",
+          },
+        ],
+      },
+    ];
+
+    const DEFAULT_CONFIG = {
+      spreadsheetId: "1wFB1SdEX0wOInqcCDE1tHE-Wg0JDbMnKVne6SezI6FA",
+      sheetId: "1165452509",
+      imageUrlPrefix: "https://raw.githubusercontent.com/c109363/ExperimentImage/main/AllDataResize/",
+      moreImgCol: "MoreComplexImageName",
+      lessImgCol: "LessComplexImageName",
+      moreReasonCol: "MoreComplexReason",
+      lessReasonCol: "LessComplexReason",
+      morePhrasesCol: "MoreComplexKeyPhrasesSubTopics",
+      lessPhrasesCol: "LessComplexKeyPhrasesSubTopics",
+    };
+
+    const uid = (() => {
+      let n = 1;
+      return () => `p_${n++}`;
+    })();
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", "&#39;");
+    }
+
+    function safeJsonParse(text) {
+      if (text == null) return null;
+      const raw = String(text).trim();
+      if (!raw) return {};
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return { _parse_error: raw };
+      }
+    }
+
+    function normalizePhraseTree(tree) {
+      if (!tree || typeof tree !== 'object' || Array.isArray(tree)) return {};
+      const out = {};
+      for (const [topic, sub] of Object.entries(tree)) {
+        if (!topic) continue;
+        if (Array.isArray(sub)) {
+          out[topic] = { Others: sub.filter(Boolean).map(String) };
+          continue;
+        }
+        if (!sub || typeof sub !== 'object') continue;
+        out[topic] = {};
+        for (const [subtopic, arr] of Object.entries(sub)) {
+          if (!subtopic) continue;
+          const phrases = Array.isArray(arr) ? arr.filter(v => String(v || '').trim()).map(v => String(v)) : [];
+          if (phrases.length) out[topic][subtopic] = phrases;
+        }
+        if (!Object.keys(out[topic]).length) delete out[topic];
+      }
+      return out;
+    }
+
+    function flattenPhraseTree(tree) {
+      const obj = normalizePhraseTree(tree);
+      const out = [];
+      for (const [topic, subMap] of Object.entries(obj)) {
+        for (const [subtopic, arr] of Object.entries(subMap)) {
+          for (const phrase of arr) {
+            out.push({ id: uid(), phrase, topic, subtopic, editing: false, selected: false, modified: false });
+          }
+        }
+      }
+      return out;
+    }
+
+    function buildPhraseTreeFromFlat(flat) {
+      const out = {};
+      for (const item of flat) {
+        const phrase = String(item.phrase || '').trim();
+        const topic = String(item.topic || '').trim();
+        const subtopic = String(item.subtopic || '').trim();
+        if (!phrase || !topic || !subtopic) continue;
+        if (!out[topic]) out[topic] = {};
+        if (!out[topic][subtopic]) out[topic][subtopic] = [];
+        out[topic][subtopic].push(phrase);
+      }
+      return out;
+    }
+
+    function serializePhraseTree(flat) {
+      return JSON.stringify(buildPhraseTreeFromFlat(flat), null, 2);
+    }
+
+    function findMissingTopics(sideRow) {
+      const existing = new Set(sideRow.phrases.map(p => p.topic).filter(Boolean));
+      return Object.keys(TOPIC_META).filter(t => !existing.has(t));
+    }
+
+    function findMissingSubtopics(sideRow, topic) {
+      const existing = new Set(sideRow.phrases.filter(p => p.topic === topic).map(p => p.subtopic).filter(Boolean));
+      return (TOPIC_META[topic] || ['Others']).filter(s => !existing.has(s));
+    }
+
+    function buildCsvUrl(cfg) {
+      if (cfg.spreadsheetId.trim() && cfg.sheetId.trim()) {
+        return `https://docs.google.com/spreadsheets/d/${cfg.spreadsheetId.trim()}/export?gid=${cfg.sheetId.trim()}&format=csv`;
+      }
+      return '';
+    }
+
+    function buildGvizJsonpUrl(cfg, callbackName) {
+      const spreadsheetId = String(cfg.spreadsheetId || '').trim();
+      const sheetId = String(cfg.sheetId || '').trim();
+      if (!spreadsheetId || !sheetId || !callbackName) return '';
+      const tqx = `responseHandler:${callbackName};out:json`;
+      return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?gid=${encodeURIComponent(sheetId)}&headers=1&tqx=${encodeURIComponent(tqx)}`;
+    }
+
+    function normalizeGvizCellValue(cell) {
+      if (!cell) return '';
+      if (cell.f != null && cell.f !== '') return cell.f;
+      const v = cell.v;
+      if (v == null) return '';
+      if (v instanceof Date) return v.toISOString();
+      return v;
+    }
+
+    function gvizResponseToRows(resp) {
+      const table = resp && resp.table;
+      if (!table || !Array.isArray(table.cols) || !Array.isArray(table.rows)) {
+        throw new Error('Unexpected Google Sheets response format.');
+      }
+
+      const headers = table.cols.map((col, idx) => {
+        const label = String(col && col.label != null ? col.label : '').trim();
+        const id = String(col && col.id != null ? col.id : '').trim();
+        return label || id || `Column${idx + 1}`;
+      });
+
+      return table.rows.map((row) => {
+        const out = {};
+        const cells = Array.isArray(row && row.c) ? row.c : [];
+        headers.forEach((header, idx) => {
+          out[header] = normalizeGvizCellValue(cells[idx]);
+        });
+        return out;
+      });
+    }
+
+    function loadGoogleSheetJsonp(cfg) {
+      return new Promise((resolve, reject) => {
+        const cbName = `__reviewerSheetCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const src = buildGvizJsonpUrl(cfg, cbName);
+        if (!src) {
+          reject(new Error('Please provide Spreadsheet ID and Sheet ID.'));
+          return;
+        }
+
+        let finished = false;
+        const script = document.createElement('script');
+        let timeoutId = 0;
+
+        function cleanup() {
+          if (script.parentNode) script.parentNode.removeChild(script);
+          try {
+            delete window[cbName];
+          } catch (_) {
+            window[cbName] = undefined;
+          }
+          if (timeoutId) {
+            window.clearTimeout(timeoutId);
+            timeoutId = 0;
+          }
+        }
+
+        window[cbName] = function (resp) {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          if (!resp) {
+            reject(new Error('Empty response from Google Sheets.'));
+            return;
+          }
+          if (resp.status === 'error') {
+            const err = Array.isArray(resp.errors) && resp.errors[0] ? resp.errors[0] : {};
+            reject(new Error(err.detailed_message || err.message || 'Google Sheets returned an error.'));
+            return;
+          }
+          try {
+            resolve(gvizResponseToRows(resp));
+          } catch (e) {
+            reject(e);
+          }
+        };
+
+        script.async = true;
+        script.src = src;
+        script.onerror = function () {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          reject(new Error('Google Sheets request failed. Make sure the sheet is public or link-viewable.'));
+        };
+
+        timeoutId = window.setTimeout(() => {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          reject(new Error('Google Sheets request timed out.'));
+        }, 20000);
+
+        document.head.appendChild(script);
+      });
+    }
+
+    function buildImageUrl(prefix, imgName) {
+      const p = String(prefix || '').trim();
+      const n = String(imgName || '').trim();
+      if (!n) return '';
+      if (!p) return n;
+      return p.endsWith('/') ? `${p}${n}` : `${p}/${n}`;
+    }
+
+    function phraseInReason(phrase, reason) {
+      const p = String(phrase || '');
+      const r = String(reason || '');
+      if (!p.trim()) return false;
+      return r.includes(p);
+    }
+
+    const TOPIC_BASE_COLORS = {
+      "Data Density / Image Clutter": "#9de1fe",
+      "Visual Encoding Clarity": "#fec5ad",
+      "Semantics / Text Legibility": "#d4ffe3",
+      "Schema": "#feecae",
+      "Color, Symbol, and Texture Details": "#bfbffd",
+      "Aesthetics Uncertainty": "#ffd4f2",
+      "Immediacy / Cognitive Load": "#DFF3A6",
+      "Others": "#cccccc",
+    };
+
+    const SUBTOPIC_COLOR_CACHE = new Map();
+
+    function clamp(n, min, max) {
+      return Math.min(Math.max(n, min), max);
+    }
+
+    function hexToRgb(hex) {
+      const raw = String(hex || '').replace('#', '').trim();
+      if (!raw) return { r: 204, g: 204, b: 204 };
+      const full = raw.length === 3 ? raw.split('').map(ch => ch + ch).join('') : raw;
+      const n = parseInt(full, 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+
+    function rgbToHex({ r, g, b }) {
+      const toHex = (v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0');
+      return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    }
+
+    function mixHex(a, b, weight = 0.5) {
+      const ca = hexToRgb(a);
+      const cb = hexToRgb(b);
+      const w = clamp(weight, 0, 1);
+      return rgbToHex({
+        r: ca.r * (1 - w) + cb.r * w,
+        g: ca.g * (1 - w) + cb.g * w,
+        b: ca.b * (1 - w) + cb.b * w,
+      });
+    }
+
+    function getPhraseVisual(topic, subtopic) {
+      const t = String(topic || 'Others').trim() || 'Others';
+      const s = String(subtopic || 'Others').trim() || 'Others';
+      const key = `${t}__${s}`;
+      if (SUBTOPIC_COLOR_CACHE.has(key)) return SUBTOPIC_COLOR_CACHE.get(key);
+
+      const base = TOPIC_BASE_COLORS[t] || TOPIC_BASE_COLORS.Others;
+      let bg = base;
+      if (s !== 'Others') {
+        const subtopics = (TOPIC_META[t] || ['Others']).filter(x => x !== 'Others');
+        const idx = Math.max(0, subtopics.indexOf(s));
+        const weights = [0.2, 0.4, 0.6];
+        bg = mixHex(base, '#ffffff', weights[idx % weights.length]);
+      }
+      const visual = {
+        bg,
+        border: mixHex(bg, '#111827', 0.24),
+      };
+      SUBTOPIC_COLOR_CACHE.set(key, visual);
+      return visual;
+    }
+
+    function findPhraseById(sideRow, phraseId) {
+      if (!sideRow?.phrases) return null;
+      // Use a cached index for O(1) lookup
+      if (!sideRow._phraseIndex || sideRow._phraseIndex.version !== sideRow._phraseVersion) {
+        const map = new Map();
+        for (const p of sideRow.phrases) map.set(p.id, p);
+        sideRow._phraseIndex = { version: sideRow._phraseVersion, map };
+      }
+      return sideRow._phraseIndex.map.get(phraseId) || null;
+    }
+
+    function findPhraseByText(sideRow, phraseText, excludeId = null) {
+      const needle = String(phraseText || '').trim();
+      if (!needle) return null;
+      return sideRow?.phrases?.find(p => p.id !== excludeId && String(p.phrase || '').trim() === needle) || null;
+    }
+
+    function findPhraseOccurrences(text, phraseText) {
+      const textValue = String(text || '');
+      const needle = String(phraseText || '');
+      const out = [];
+      if (!needle) return out;
+      let idx = 0;
+      let occurrenceIndex = 0;
+      while (idx <= textValue.length - needle.length) {
+        const found = textValue.indexOf(needle, idx);
+        if (found === -1) break;
+        out.push({ start: found, end: found + needle.length, occurrenceIndex });
+        occurrenceIndex += 1;
+        idx = found + Math.max(needle.length, 1);
+      }
+      return out;
+    }
+
+    function finalizeReasonLayout(text, candidates) {
+      const ordered = [...(candidates || [])].sort((a, b) => (
+        a.start - b.start ||
+        b.len - a.len ||
+        String(a.phraseText).localeCompare(String(b.phraseText)) ||
+        String(a.phraseId).localeCompare(String(b.phraseId)) ||
+        a.occurrenceIndex - b.occurrenceIndex
+      ));
+
+      const matches = [];
+      const hidden = [];
+      for (const cand of ordered) {
+        const overlap = matches.find(m => !(cand.end <= m.start || cand.start >= m.end));
+        if (overlap) {
+          hidden.push(cand);
+          continue;
+        }
+        matches.push(cand);
+      }
+      matches.sort((a, b) => a.start - b.start || a.end - b.end);
+      return { text, matches, hidden };
+    }
+
+    function initSideRuntime(sideRow) {
+      if (!sideRow) return sideRow;
+      sideRow._phraseVersion = 1;
+      sideRow._layoutCache = null;
+      sideRow._renderCache = null;
+      return sideRow;
+    }
+
+    function bumpSidePhraseVersion(sideRow) {
+      if (!sideRow) return;
+      sideRow._phraseVersion = (sideRow._phraseVersion || 0) + 1;
+      sideRow._layoutCache = null;
+      sideRow._renderCache = null;
+    }
+
+    function getBaseReasonLayout(sideRow) {
+      const text = String(sideRow?.reason || '');
+      const version = Number(sideRow?._phraseVersion || 0);
+      const cached = sideRow?._layoutCache;
+      if (cached && cached.version === version && cached.text === text) return cached;
+
+      const candidates = [];
+      for (const phrase of sideRow?.phrases || []) {
+        const phraseText = String(phrase.phrase || '');
+        if (!phraseText) continue;
+        const hits = findPhraseOccurrences(text, phraseText);
+        for (const hit of hits) {
+          candidates.push({
+            phraseId: phrase.id,
+            phraseText,
+            topic: phrase.topic,
+            subtopic: phrase.subtopic,
+            start: hit.start,
+            end: hit.end,
+            occurrenceIndex: hit.occurrenceIndex,
+            len: hit.end - hit.start,
+          });
+        }
+      }
+
+      const layout = finalizeReasonLayout(text, candidates);
+      const next = { version, text, candidates, layout };
+      if (sideRow) sideRow._layoutCache = next;
+      return next;
+    }
+
+    function buildReasonLayout(sideRow, preview = null) {
+      const base = getBaseReasonLayout(sideRow);
+      if (!preview) return base.layout;
+
+      const candidates = base.candidates.filter(c => !(
+        c.phraseId === preview.phraseId &&
+        c.occurrenceIndex === preview.occurrenceIndex
+      ));
+
+      const previewPhrase = findPhraseById(sideRow, preview.phraseId);
+      if (previewPhrase) {
+        candidates.push({
+          phraseId: previewPhrase.id,
+          phraseText: String(base.text.slice(preview.start, preview.end) || ''),
+          topic: previewPhrase.topic,
+          subtopic: previewPhrase.subtopic,
+          start: preview.start,
+          end: preview.end,
+          occurrenceIndex: preview.occurrenceIndex,
+          len: preview.end - preview.start,
+          isPreview: true,
+        });
+      }
+
+      return finalizeReasonLayout(base.text, candidates);
+    }
+
+    function getSelectedPhraseId(state, pairId, side) {
+      return state.selectedChip && state.selectedChip.pairId === pairId && state.selectedChip.side === side
+        ? state.selectedChip.phraseId
+        : null;
+    }
+
+    function renderReasonHtml(sideRow, pairId, side, state) {
+      const drag = state.reasonDrag && state.reasonDrag.pairId === pairId && state.reasonDrag.side === side
+        ? state.reasonDrag
+        : null;
+      const preview = drag ? trimRangeToContent(String(sideRow?.reason || ''), drag.previewStart, drag.previewEnd) : null;
+      const selectedPhraseId = getSelectedPhraseId(state, pairId, side);
+      // NOTE: hoveredPhraseId deliberately excluded from render to avoid costly re-render on every hover.
+      // Hover highlighting is handled via direct DOM manipulation in hoverPhrase/leavePhrase.
+      const activeSelection = drag ? {
+        pairId,
+        side,
+        phraseId: drag.phraseId,
+        occurrenceIndex: drag.occurrenceIndex,
+        start: preview.start,
+        end: preview.end,
+      } : (state.reasonSelection && state.reasonSelection.pairId === pairId && state.reasonSelection.side === side
+        ? state.reasonSelection
+        : null);
+      const previewKey = drag && preview ? `${preview.start}:${preview.end}:${drag.phraseId}:${drag.occurrenceIndex}` : '';
+      const activeKey = activeSelection
+        ? `${activeSelection.phraseId}:${activeSelection.occurrenceIndex}:${activeSelection.start}:${activeSelection.end}`
+        : '';
+      const renderKey = [
+        Number(sideRow?._phraseVersion || 0),
+        selectedPhraseId || '',
+        activeKey,
+        previewKey,
+      ].join('|');
+      if (sideRow?._renderCache && sideRow._renderCache.key === renderKey) {
+        return sideRow._renderCache.html;
+      }
+
+      const layout = buildReasonLayout(sideRow, drag && preview.end > preview.start ? {
+        phraseId: drag.phraseId,
+        occurrenceIndex: drag.occurrenceIndex,
+        start: preview.start,
+        end: preview.end,
+      } : null);
+      const text = layout.text;
+      if (!layout.matches.length) {
+        const html = escapeHtml(text);
+        if (sideRow) sideRow._renderCache = { key: renderKey, html };
+        return html;
+      }
+
+      let out = '';
+      let cursor = 0;
+      for (const match of layout.matches) {
+        out += escapeHtml(text.slice(cursor, match.start));
+        const phrase = findPhraseById(sideRow, match.phraseId);
+        const visual = getPhraseVisual(phrase?.topic, phrase?.subtopic);
+        const classes = ['reason-phrase'];
+        if (match.phraseId === selectedPhraseId) classes.push('is-selected');
+
+        const isActive = !!activeSelection &&
+          activeSelection.phraseId === match.phraseId &&
+          activeSelection.occurrenceIndex === match.occurrenceIndex;
+        if (isActive) classes.push('is-active-occurrence');
+
+        out += `<span class="${classes.join(' ')}" style="--phrase-bg:${visual.bg}; --phrase-border:${visual.border};" data-phrase-id="${escapeHtml(match.phraseId)}" data-topic="${escapeHtml(phrase?.topic || '')}" data-subtopic="${escapeHtml(phrase?.subtopic || '')}" data-occurrence-index="${match.occurrenceIndex}" data-start="${match.start}" data-end="${match.end}">`;
+        if (isActive) out += `<span class="boundary-handle left" data-handle-side="left"></span>`;
+        out += escapeHtml(text.slice(match.start, match.end));
+        if (isActive) out += `<span class="boundary-handle right" data-handle-side="right"></span>`;
+        out += `</span>`;
+        cursor = match.end;
+      }
+      out += escapeHtml(text.slice(cursor));
+      if (sideRow) sideRow._renderCache = { key: renderKey, html: out };
+      return out;
+    }
+
+    function getWordRanges(text) {
+      const out = [];
+      const regex = /\S+/g;
+      let m;
+      while ((m = regex.exec(text))) {
+        out.push({ start: m.index, end: m.index + m[0].length });
+      }
+      return out;
+    }
+
+    function chooseBoundaryIndex(text, anchorStart, anchorEnd, handleSide, rawIndex) {
+      const words = getWordRanges(text);
+      if (!words.length) return handleSide === 'left' ? anchorStart : anchorEnd;
+      const candidates = handleSide === 'left'
+        ? words.map(w => w.start).filter(v => v < anchorEnd)
+        : words.map(w => w.end).filter(v => v > anchorStart);
+      if (!candidates.length) return handleSide === 'left' ? anchorStart : anchorEnd;
+      let best = candidates[0];
+      let bestDist = Math.abs(best - rawIndex);
+      for (const candidate of candidates) {
+        const dist = Math.abs(candidate - rawIndex);
+        if (dist < bestDist) {
+          best = candidate;
+          bestDist = dist;
+        }
+      }
+      return best;
+    }
+
+    function trimRangeToContent(text, start, end) {
+      let s = clamp(start, 0, text.length);
+      let e = clamp(end, 0, text.length);
+      if (e < s) [s, e] = [e, s];
+      while (s < e && /\s/.test(text[s])) s += 1;
+      while (e > s && /\s/.test(text[e - 1])) e -= 1;
+      return { start: s, end: e };
+    }
+
+    function getTextNodeSegments(root) {
+      const segments = [];
+      let offset = 0;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          if (!node?.nodeValue) return NodeFilter.FILTER_REJECT;
+          if (node.parentElement?.classList?.contains('boundary-handle')) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      let node;
+      while ((node = walker.nextNode())) {
+        segments.push({ node, start: offset, end: offset + node.nodeValue.length });
+        offset += node.nodeValue.length;
+      }
+      return segments;
+    }
+
+    function getCharOffsetFromPoint(root, x, y) {
+      let node = null;
+      let localOffset = 0;
+      if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(x, y);
+        if (!pos) return null;
+        node = pos.offsetNode;
+        localOffset = pos.offset;
+      } else if (document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(x, y);
+        if (!range) return null;
+        node = range.startContainer;
+        localOffset = range.startOffset;
+      }
+      if (!node) return null;
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
+        const firstText = walker.nextNode();
+        if (!firstText) return null;
+        node = firstText;
+        localOffset = 0;
+      }
+      const segments = getTextNodeSegments(root);
+      const hit = segments.find(seg => seg.node === node);
+      if (!hit) return null;
+      return clamp(hit.start + localOffset, hit.start, hit.end);
+    }
+
+    function parseRowsToPairs(rows, cfg) {
+
+      return rows.map((row, index) => {
+        const moreReason = String(row[cfg.moreReasonCol] ?? '');
+        const lessReason = String(row[cfg.lessReasonCol] ?? '');
+        const moreRaw = safeJsonParse(row[cfg.morePhrasesCol]);
+        const lessRaw = safeJsonParse(row[cfg.lessPhrasesCol]);
+
+        const pairId = `pair_${index}`;
+
+        return {
+          pairId,
+          rowIndex: index,
+          originalRow: Object.freeze({ ...row }),
+          more: initSideRuntime({
+            side: 'more',
+            complexLabel: 'More',
+            imgName: String(row[cfg.moreImgCol] ?? ''),
+            reason: moreReason,
+            phrases: flattenPhraseTree(moreRaw),
+            parseError: moreRaw && moreRaw._parse_error ? String(moreRaw._parse_error) : '',
+          }),
+          less: initSideRuntime({
+            side: 'less',
+            complexLabel: 'Less',
+            imgName: String(row[cfg.lessImgCol] ?? ''),
+            reason: lessReason,
+            phrases: flattenPhraseTree(lessRaw),
+            parseError: lessRaw && lessRaw._parse_error ? String(lessRaw._parse_error) : '',
+          }),
+        };
+      });
+    }
+
+    function groupedPhrases(sideRow) {
+      const map = {};
+      for (const item of sideRow.phrases) {
+        const topic = item.topic || 'Others';
+        const subtopic = item.subtopic || 'Others';
+        if (!map[topic]) map[topic] = {};
+        if (!map[topic][subtopic]) map[topic][subtopic] = [];
+        map[topic][subtopic].push(item);
+      }
+      return map;
+    }
+
+    function sideMatchesFilters(side, filters) {
+      if (filters.complex !== 'all' && side.side !== filters.complex) return false;
+
+      const matchesTopicAndSubtopic = side.phrases.some(p => {
+        if (filters.topic && p.topic !== filters.topic) return false;
+        if (filters.subtopic && p.subtopic !== filters.subtopic) return false;
+        return true;
+      });
+      if ((filters.topic || filters.subtopic) && !matchesTopicAndSubtopic) return false;
+
+      const phraseNeedle = filters.phrase.trim().toLowerCase();
+      if (phraseNeedle) {
+        const ok = side.phrases.some(p => String(p.phrase).toLowerCase().includes(phraseNeedle));
+        if (!ok) return false;
+      }
+      return true;
+    }
+
+    createApp({
+      setup() {
+        const topPanelRef = ref(null);
+        const filterPanelRef = ref(null);
+        const config = reactive({ ...DEFAULT_CONFIG });
+        const filters = reactive({ complex: 'all', topic: '', subtopic: '', phrase: '', showPhrases: true });
+        const state = reactive({
+          loading: false,
+          rowsLoaded: 0,
+          pairs: [],
+          status: '',
+          statusType: 'info',
+          selectedChip: null,
+          selectedText: null,
+          reasonSelection: null,
+          reasonDrag: null,
+          showConfig: false,
+          showHelp: false,
+          imageModal: {
+            open: false,
+            url: '',
+            name: '',
+          },
+          contextMenu: {
+            open: false,
+            x: 0,
+            y: 0,
+            pairId: null,
+            side: null,
+            kind: '',
+            phraseId: null,
+            text: '',
+            activeTopic: '',
+          },
+          addDialog: {
+            open: false,
+            pairId: null,
+            side: null,
+            phrase: '',
+            topic: '',
+            subtopic: '',
+            topicLocked: false,
+            sourceChip: null,
+          },
+          copiedPhraseKey: '',
+          filterHidden: false,
+          filterFloating: false,
+          filterHeight: 0,
+          draggedChip: null,
+          draggingChipId: null,
+          editingChipId: null,
+          lastScrollY: 0,
+          _scrollRaf: 0,
+        });
+
+        function setStatus(msg, type = 'info') {
+          state.status = msg;
+          state.statusType = type;
+        }
+
+        function flashCopiedPhraseKey(key) {
+          state.copiedPhraseKey = key;
+          window.clearTimeout(state._copiedPhraseTimer);
+          state._copiedPhraseTimer = window.setTimeout(() => {
+            if (state.copiedPhraseKey === key) state.copiedPhraseKey = '';
+          }, 1000);
+        }
+
+        function updateFloatingLayout() {
+          const topEl = topPanelRef.value;
+          const filterEl = filterPanelRef.value;
+          if (filterEl) state.filterHeight = filterEl.offsetHeight || 0;
+          if (!topEl) {
+            state.filterFloating = false;
+            state.filterHidden = false;
+            return;
+          }
+          const panelBottom = topEl.getBoundingClientRect().bottom;
+          const shouldFloat = state.filterFloating ? (panelBottom <= 8) : (panelBottom <= -8);
+          state.filterFloating = shouldFloat;
+          if (!shouldFloat) state.filterHidden = false;
+        }
+
+        function applyWindowScroll() {
+          const y = window.scrollY || 0;
+          updateFloatingLayout();
+          if (!state.filterFloating) {
+            state.lastScrollY = y;
+            state._scrollRaf = 0;
+            return;
+          }
+          if (y < 32) state.filterHidden = false;
+          else if (y > state.lastScrollY + 10) state.filterHidden = true;
+          else if (y < state.lastScrollY - 10) state.filterHidden = false;
+          state.lastScrollY = y;
+          state._scrollRaf = 0;
+        }
+
+        function handleWindowScroll() {
+          if (state._scrollRaf) return;
+          state._scrollRaf = window.requestAnimationFrame(applyWindowScroll);
+        }
+
+        let _nearTopThrottle = 0;
+        function handleMouseNearTop(e) {
+          if (_nearTopThrottle) return;
+          _nearTopThrottle = 1;
+          setTimeout(() => { _nearTopThrottle = 0; }, 100);
+          if ((e?.clientY || 9999) <= 72) state.filterHidden = false;
+        }
+
+        function handleWindowResize() {
+          updateFloatingLayout();
+        }
+
+        const filterTopics = computed(() => Object.keys(TOPIC_META));
+
+        const filterSubtopics = computed(() => {
+          if (filters.topic && TOPIC_META[filters.topic]) return [...TOPIC_META[filters.topic]];
+          return Array.from(new Set(Object.values(TOPIC_META).flat()));
+        });
+
+        const addDialogTopicOptionsList = computed(() => {
+          const d = state.addDialog;
+          const sideRow = getSide(d.pairId, d.side);
+          if (!sideRow) return [];
+          return findMissingTopics(sideRow);
+        });
+
+        const addDialogSubtopicOptionsList = computed(() => {
+          const d = state.addDialog;
+          const sideRow = getSide(d.pairId, d.side);
+          if (!sideRow || !d.topic) return [];
+          return findMissingSubtopics(sideRow, d.topic);
+        });
+
+        const filteredPairs = computed(() => {
+          return state.pairs
+            .map(pair => {
+              const showMore = sideMatchesFilters(pair.more, filters);
+              const showLess = sideMatchesFilters(pair.less, filters);
+              if (!showMore && !showLess) return null;
+              return { pair, showMore, showLess };
+            })
+            .filter(Boolean);
+        });
+
+        const contextMenuSubtopics = computed(() => {
+          const topic = state.contextMenu.activeTopic;
+          return topic ? [...(TOPIC_META[topic] || ['Others'])] : [];
+        });
+
+        function clearNativeSelection() {
+          const sel = window.getSelection?.();
+          if (sel && sel.rangeCount) sel.removeAllRanges();
+        }
+
+        function clearTextSelection(removeNative = false) {
+          state.selectedText = null;
+          if (removeNative) clearNativeSelection();
+        }
+
+        function closeContextMenu() {
+          state.contextMenu.open = false;
+          state.contextMenu.kind = '';
+          state.contextMenu.pairId = null;
+          state.contextMenu.side = null;
+          state.contextMenu.phraseId = null;
+          state.contextMenu.text = '';
+          state.contextMenu.activeTopic = '';
+        }
+
+        function clearPhraseSelection() {
+          state.selectedChip = null;
+          state.reasonSelection = null;
+        }
+
+        let _selChangeRaf = 0;
+        function handleSelectionChange() {
+          if (_selChangeRaf) return;
+          _selChangeRaf = window.requestAnimationFrame(() => {
+            _selChangeRaf = 0;
+            const txt = String(window.getSelection?.()?.toString?.() || '').trim();
+            if (!txt) state.selectedText = null;
+          });
+        }
+
+        function handleDocumentMouseUp() {
+          setTimeout(() => {
+            const txt = String(window.getSelection?.()?.toString?.() || '').trim();
+            if (!txt) state.selectedText = null;
+          }, 0);
+        }
+
+        function openConfig() { state.showConfig = true; }
+        function closeConfig() { state.showConfig = false; }
+        function openHelp() { state.showHelp = true; }
+        function closeHelp() { state.showHelp = false; }
+
+        const _pairMap = new Map();
+        function _rebuildPairMap() {
+          _pairMap.clear();
+          for (const p of state.pairs) _pairMap.set(p.pairId, p);
+        }
+
+        function getPair(pairId) {
+          return _pairMap.get(pairId) || state.pairs.find(p => p.pairId === pairId) || null;
+        }
+
+        function getSide(pairId, side) {
+          const pair = getPair(pairId);
+          if (!pair) return null;
+          return side === 'more' ? pair.more : pair.less;
+        }
+
+        function getReasonBoxSelector(pairId, side) {
+          return `[data-reason-box="${CSS.escape(`${pairId}__${side}`)}"]`;
+        }
+
+        function getReasonBoxEl(pairId, side) {
+          return document.querySelector(getReasonBoxSelector(pairId, side));
+        }
+
+        function selectPhrase(pairId, side, phraseId, reasonSelection = null) {
+          state.selectedChip = { pairId, side, phraseId };
+          state.reasonSelection = reasonSelection;
+        }
+
+        function selectPhraseOccurrenceByRange(pairId, side, phraseId, start, end) {
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return;
+          const match = buildReasonLayout(sideRow).matches.find(m => m.phraseId === phraseId && m.start === start && m.end === end);
+          selectPhrase(pairId, side, phraseId, match ? {
+            pairId,
+            side,
+            phraseId,
+            occurrenceIndex: match.occurrenceIndex,
+            start: match.start,
+            end: match.end,
+          } : null);
+        }
+
+        function isSelectedChip(pairId, side, phraseId) {
+          return !!state.selectedChip && state.selectedChip.pairId === pairId && state.selectedChip.side === side && state.selectedChip.phraseId === phraseId;
+        }
+
+        function removePhraseById(pairId, side, phraseId, setMessage = true) {
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return false;
+          const idx = sideRow.phrases.findIndex(p => p.id === phraseId);
+          if (idx === -1) return false;
+          sideRow.phrases.splice(idx, 1);
+          bumpSidePhraseVersion(sideRow);
+          if (state.selectedChip && state.selectedChip.pairId === pairId && state.selectedChip.side === side && state.selectedChip.phraseId === phraseId) {
+            clearPhraseSelection();
+          }
+          // Clear non-reactive hover state
+          const hKey = `${pairId}__${side}`;
+          if (_hoverMap.get(hKey) === phraseId) _hoverMap.delete(hKey);
+          if (setMessage) setStatus('Phrase deleted.', 'good');
+          return true;
+        }
+
+        function deleteSelectedPhrase() {
+          if (!state.selectedChip) return;
+          removePhraseById(state.selectedChip.pairId, state.selectedChip.side, state.selectedChip.phraseId, true);
+        }
+
+        function handleGlobalKeydown(e) {
+          const tag = document.activeElement?.tagName?.toLowerCase();
+          const isTyping = ['input', 'textarea', 'select'].includes(tag);
+          if (e.key === 'Escape') {
+            if (state.contextMenu.open) {
+              closeContextMenu();
+              return;
+            }
+          }
+          if (isTyping) return;
+          if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedChip) {
+            e.preventDefault();
+            deleteSelectedPhrase();
+          }
+        }
+
+        function beginEditChip(pairId, side, phraseId) {
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return;
+          closeContextMenu();
+          for (const phrase of sideRow.phrases) {
+            phrase.editing = phrase.id === phraseId;
+            if (phrase.editing) phrase._draft = phrase.phrase;
+          }
+          state.editingChipId = phraseId;
+          selectPhrase(pairId, side, phraseId, null);
+          nextTick(() => {
+            const el = document.querySelector(`[data-chip-input="${phraseId}"]`);
+            if (el) el.focus();
+          });
+        }
+
+        function saveEditChip(pairId, side, phraseId, save = true) {
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return;
+          const phrase = findPhraseById(sideRow, phraseId);
+          if (!phrase) return;
+          if (save) {
+            const next = String(phrase._draft || '').trim();
+            if (!next) {
+              setStatus('Phrase cannot be empty.', 'warn');
+              return;
+            }
+            if (next !== phrase.phrase) {
+              const existing = findPhraseByText(sideRow, next, phrase.id);
+              if (existing) {
+                if (existing.topic === phrase.topic && existing.subtopic === phrase.subtopic) {
+                  state.editingChipId = null;
+                  removePhraseById(pairId, side, phrase.id, false);
+                  selectPhrase(pairId, side, existing.id, null);
+                  setStatus('Merged with the existing phrase.', 'good');
+                  return;
+                }
+                setStatus('That phrase already exists under a different topic/subtopic. Reclassify it instead.', 'warn');
+                return;
+              }
+              phrase.phrase = next;
+              phrase.modified = true;
+              bumpSidePhraseVersion(sideRow);
+              if (!phraseInReason(next, sideRow.reason)) setStatus('Edited phrase is not found in the reason text.', 'warn');
+              else setStatus('Phrase edited.', 'good');
+            }
+          }
+          phrase.editing = false;
+          state.editingChipId = null;
+          delete phrase._draft;
+        }
+
+        function onReasonMouseUp(pairId, side) {
+          const sel = window.getSelection();
+          const text = String(sel?.toString() || '').trim();
+          if (!text) {
+            clearTextSelection();
+            return;
+          }
+          const sideRow = getSide(pairId, side);
+          if (!sideRow || !sideRow.reason.includes(text)) {
+            clearTextSelection();
+            return;
+          }
+          state.selectedText = { pairId, side, text };
+          setStatus('Selected text ready. Drag it, or right-click to classify it.', 'good');
+        }
+
+        function selectionAllowed(pairId, side) {
+          return state.selectedText && state.selectedText.pairId === pairId && state.selectedText.side === side;
+        }
+
+        function chipDragAllowed(pairId, side) {
+          return state.draggedChip && state.draggedChip.pairId === pairId && state.draggedChip.side === side;
+        }
+
+        function addAllowed(pairId, side) {
+          return selectionAllowed(pairId, side) || chipDragAllowed(pairId, side);
+        }
+
+        // ── Fully non-reactive hover system ──────────────────────────────
+        // Hover state is stored outside Vue reactivity to avoid triggering
+        // component re-renders on every mouse enter/leave.
+        const _hoverMap = new Map(); // "pairId__side" → phraseId
+
+        function _applyHoverDom(pairId, side, phraseId) {
+          const sideKey = `${pairId}__${side}`;
+          // Reason-phrase spans
+          const reasonBox = getReasonBoxEl(pairId, side);
+          if (reasonBox) {
+            const old = reasonBox.querySelectorAll('.reason-phrase.is-hovered');
+            for (let i = 0; i < old.length; i++) old[i].classList.remove('is-hovered');
+            if (phraseId) {
+              const els = reasonBox.querySelectorAll(`.reason-phrase[data-phrase-id="${CSS.escape(phraseId)}"]`);
+              for (let i = 0; i < els.length; i++) els[i].classList.add('is-hovered');
+            }
+          }
+          // Chip elements (scoped to the side-row via data-side-key)
+          const sideRowEl = document.querySelector(`[data-side-key="${CSS.escape(sideKey)}"]`);
+          if (sideRowEl) {
+            const old = sideRowEl.querySelectorAll('.chip.hovered');
+            for (let i = 0; i < old.length; i++) old[i].classList.remove('hovered');
+            if (phraseId) {
+              const els = sideRowEl.querySelectorAll(`.chip[data-phrase-id="${CSS.escape(phraseId)}"]`);
+              for (let i = 0; i < els.length; i++) {
+                // Don't add hovered if chip is already selected
+                if (!els[i].classList.contains('selected')) els[i].classList.add('hovered');
+              }
+            }
+          }
+        }
+
+        function hoverPhrase(pairId, side, phraseId) {
+          _hidePhraseTooltip();
+          const key = `${pairId}__${side}`;
+          if (_hoverMap.get(key) === phraseId) return;
+          _hoverMap.set(key, phraseId);
+          _applyHoverDom(pairId, side, phraseId);
+        }
+
+        function leavePhrase(pairId, side, phraseId) {
+          const key = `${pairId}__${side}`;
+          if (_hoverMap.get(key) !== phraseId) return;
+          _hoverMap.delete(key);
+          _applyHoverDom(pairId, side, null);
+        }
+
+        function _clearHoverForSide(pairId, side) {
+          const key = `${pairId}__${side}`;
+          const old = _hoverMap.get(key);
+          if (old) {
+            _hoverMap.delete(key);
+            _applyHoverDom(pairId, side, null);
+          }
+        }
+
+        // ── Phrase tooltip (non-reactive, pure DOM) ──────────────────────
+        let _tooltipEl = null;
+        let _tooltipVisible = false;
+        let _tooltipRaf = 0;
+
+        function _ensureTooltip() {
+          if (_tooltipEl) return _tooltipEl;
+          _tooltipEl = document.createElement('div');
+          _tooltipEl.className = 'phrase-tooltip';
+          document.body.appendChild(_tooltipEl);
+          return _tooltipEl;
+        }
+
+        function _showPhraseTooltip(phraseEl, mouseX, mouseY) {
+          const topic = phraseEl.dataset?.topic;
+          const subtopic = phraseEl.dataset?.subtopic;
+          if (!topic) { _hidePhraseTooltip(); return; }
+          const tt = _ensureTooltip();
+          tt.innerHTML = `<span class="tt-topic">${escapeHtml(topic)}</span><span class="tt-sep">›</span><span class="tt-sub">${escapeHtml(subtopic || 'Others')}</span>`;
+          // Position near the mouse, slightly above
+          tt.style.left = '0px';
+          tt.style.top = '0px';
+          tt.classList.add('visible');
+          _tooltipVisible = true;
+          // Use RAF to measure and position after layout
+          if (_tooltipRaf) cancelAnimationFrame(_tooltipRaf);
+          _tooltipRaf = requestAnimationFrame(() => {
+            _tooltipRaf = 0;
+            if (!_tooltipVisible) return;
+            const ttRect = tt.getBoundingClientRect();
+            let top = mouseY - ttRect.height - 20;
+            if (top < 4) top = mouseY + 18;
+            let left = mouseX - ttRect.width / 2;
+            left = Math.max(4, Math.min(left, window.innerWidth - ttRect.width - 4));
+            tt.style.left = `${left}px`;
+            tt.style.top = `${top}px`;
+          });
+        }
+
+        function _hidePhraseTooltip() {
+          if (!_tooltipVisible) return;
+          _tooltipVisible = false;
+          if (_tooltipEl) _tooltipEl.classList.remove('visible');
+          if (_tooltipRaf) { cancelAnimationFrame(_tooltipRaf); _tooltipRaf = 0; }
+        }
+
+        function onReasonMouseOver(pairId, side, e) {
+          const phraseEl = e.target?.closest?.('.reason-phrase');
+          const phraseId = phraseEl?.dataset?.phraseId;
+          const key = `${pairId}__${side}`;
+          const current = _hoverMap.get(key) || null;
+          if (phraseId && phraseId === current) {
+            // Same phrase but maybe different element — update tooltip position
+            _showPhraseTooltip(phraseEl, e.clientX, e.clientY);
+            return;
+          }
+          if (phraseId) {
+            hoverPhrase(pairId, side, phraseId);
+            _showPhraseTooltip(phraseEl, e.clientX, e.clientY);
+          } else {
+            if (current) leavePhrase(pairId, side, current);
+            _hidePhraseTooltip();
+          }
+        }
+
+        function onReasonMouseOut(pairId, side, e) {
+          const phraseEl = e.target?.closest?.('.reason-phrase');
+          if (!phraseEl) return;
+          const nextEl = e.relatedTarget?.closest?.('.reason-phrase');
+          const phraseId = phraseEl.dataset?.phraseId;
+          if (nextEl && nextEl.dataset?.phraseId === phraseId) return;
+          const reasonBox = getReasonBoxEl(pairId, side);
+          if (reasonBox && e.relatedTarget && reasonBox.contains(e.relatedTarget)) return;
+          leavePhrase(pairId, side, phraseId);
+          _hidePhraseTooltip();
+        }
+
+        function currentHoveredText(sideRow) {
+          // Note: uses non-reactive hover state; not tracked by Vue
+          const key = sideRow ? Object.keys(TOPIC_META).length : ''; // dummy, won't match
+          for (const [k, phraseId] of _hoverMap) {
+            if (phraseId) {
+              const hit = sideRow?.phrases?.find(p => p.id === phraseId);
+              if (hit) return hit.phrase;
+            }
+          }
+          return '';
+        }
+
+        function chipInvalid(sideRow, phrase) {
+          // Use a cache on the sideRow to avoid repeating string search
+          if (!sideRow._invalidCache || sideRow._invalidCache.version !== sideRow._phraseVersion) {
+            sideRow._invalidCache = { version: sideRow._phraseVersion, map: new Map() };
+          }
+          const cache = sideRow._invalidCache;
+          if (cache.map.has(phrase.id)) return cache.map.get(phrase.id);
+          const result = !phraseInReason(phrase.phrase, sideRow.reason);
+          cache.map.set(phrase.id, result);
+          return result;
+        }
+
+        const _chipStyleCache = new Map();
+        function phraseChipStyle(chip) {
+          const key = `${chip.topic || 'Others'}__${chip.subtopic || 'Others'}`;
+          if (_chipStyleCache.has(key)) return _chipStyleCache.get(key);
+          const visual = getPhraseVisual(chip.topic, chip.subtopic);
+          const style = {
+            '--phrase-border': visual.border,
+            backgroundColor: visual.bg,
+          };
+          _chipStyleCache.set(key, style);
+          return style;
+        }
+
+        function renderReason(sideRow, pairId, side) {
+          return renderReasonHtml(sideRow, pairId, side, state);
+        }
+
+        function getDatasetSelectionFromPhraseEl(phraseEl, pairId, side) {
+          const phraseId = phraseEl?.dataset?.phraseId;
+          if (!phraseId) return null;
+          const occurrenceIndex = Number(phraseEl.dataset.occurrenceIndex);
+          const start = Number(phraseEl.dataset.start);
+          const end = Number(phraseEl.dataset.end);
+          return { pairId, side, phraseId, occurrenceIndex, start, end };
+        }
+
+        function onReasonClick(pairId, side, e) {
+          if (e.target?.closest?.('.boundary-handle')) return;
+          const phraseEl = e.target?.closest?.('.reason-phrase');
+          if (!phraseEl) {
+            clearPhraseSelection();
+            closeContextMenu();
+            return;
+          }
+          const sel = getDatasetSelectionFromPhraseEl(phraseEl, pairId, side);
+          if (!sel) return;
+          clearTextSelection(true);
+          closeContextMenu();
+          selectPhrase(pairId, side, sel.phraseId, sel);
+        }
+
+        function positionContextMenu(clientX, clientY) {
+          const menuWidth = Math.min(560, window.innerWidth - 16);
+          const menuHeight = Math.min(420, window.innerHeight - 16);
+          return {
+            x: clamp(clientX, 8, Math.max(8, window.innerWidth - menuWidth - 8)),
+            y: clamp(clientY, 8, Math.max(8, window.innerHeight - menuHeight - 8)),
+          };
+        }
+
+        function openPhraseContextMenu(pairId, side, phraseId, e) {
+          const sideRow = getSide(pairId, side);
+          const phrase = findPhraseById(sideRow, phraseId);
+          if (!phrase) return;
+          const pos = positionContextMenu(e.clientX, e.clientY);
+          state.contextMenu.open = true;
+          state.contextMenu.x = pos.x;
+          state.contextMenu.y = pos.y;
+          state.contextMenu.pairId = pairId;
+          state.contextMenu.side = side;
+          state.contextMenu.kind = 'phrase';
+          state.contextMenu.phraseId = phraseId;
+          state.contextMenu.text = phrase.phrase;
+          state.contextMenu.activeTopic = phrase.topic || Object.keys(TOPIC_META)[0] || '';
+        }
+
+        function openTextContextMenu(pairId, side, text, e) {
+          const pos = positionContextMenu(e.clientX, e.clientY);
+          state.contextMenu.open = true;
+          state.contextMenu.x = pos.x;
+          state.contextMenu.y = pos.y;
+          state.contextMenu.pairId = pairId;
+          state.contextMenu.side = side;
+          state.contextMenu.kind = 'text';
+          state.contextMenu.phraseId = null;
+          state.contextMenu.text = text;
+          state.contextMenu.activeTopic = Object.keys(TOPIC_META)[0] || '';
+        }
+
+        function onReasonContextMenu(pairId, side, e) {
+          e.preventDefault();
+          _hidePhraseTooltip();
+          const phraseEl = e.target?.closest?.('.reason-phrase');
+          if (phraseEl) {
+            const sel = getDatasetSelectionFromPhraseEl(phraseEl, pairId, side);
+            if (!sel) return;
+            selectPhrase(pairId, side, sel.phraseId, sel);
+            openPhraseContextMenu(pairId, side, sel.phraseId, e);
+            return;
+          }
+          if (selectionAllowed(pairId, side) && state.selectedText?.text) {
+            clearPhraseSelection();
+            openTextContextMenu(pairId, side, state.selectedText.text, e);
+            return;
+          }
+          closeContextMenu();
+        }
+
+        function onChipContextMenu(pairId, side, phraseId, e) {
+          e.preventDefault();
+          e.stopPropagation();
+          clearTextSelection(true);
+          selectPhrase(pairId, side, phraseId, null);
+          openPhraseContextMenu(pairId, side, phraseId, e);
+        }
+
+
+        function shouldKeepPhraseSelectionTarget(target) {
+          if (!target || typeof target.closest !== 'function') return false;
+          return !!target.closest('.chip, .reason-phrase, .boundary-handle, .context-menu, input, textarea, select, button, .drop-plus');
+        }
+
+        function onAppMouseDown(e) {
+          if (shouldKeepPhraseSelectionTarget(e.target)) return;
+          clearPhraseSelection();
+          closeContextMenu();
+        }
+
+        function setContextMenuTopic(topic) {
+          state.contextMenu.activeTopic = topic;
+        }
+
+        function upsertPhrase(pairId, side, topic, subtopic, phraseText, options = {}) {
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return null;
+          const text = String(phraseText || '').trim();
+          if (!text || !topic || !subtopic) return null;
+
+          const existing = findPhraseByText(sideRow, text, options.excludeId || null);
+          if (existing) {
+            const moved = existing.topic !== topic || existing.subtopic !== subtopic;
+            existing.topic = topic;
+            existing.subtopic = subtopic;
+            existing.modified = true;
+            if (moved) bumpSidePhraseVersion(sideRow);
+            if (!options.silentSelect) selectPhrase(pairId, side, existing.id, null);
+            if (!options.suppressStatus) {
+              if (moved) setStatus('Existing phrase reclassified.', 'good');
+              else setStatus('Phrase already exists.', 'info');
+            }
+            return existing;
+          }
+
+          const phrase = {
+            id: uid(),
+            phrase: text,
+            topic,
+            subtopic,
+            editing: false,
+            selected: false,
+            modified: true,
+          };
+          sideRow.phrases.push(phrase);
+          bumpSidePhraseVersion(sideRow);
+          if (!options.silentSelect) selectPhrase(pairId, side, phrase.id, null);
+          if (!options.suppressStatus) {
+            if (!phraseInReason(text, sideRow.reason)) setStatus('Added phrase, but it is not found in the reason text.', 'warn');
+            else setStatus('Phrase added.', 'good');
+          }
+          return phrase;
+        }
+
+        function addPhrase(pairId, side, topic, subtopic, phraseText) {
+          return upsertPhrase(pairId, side, topic, subtopic, phraseText);
+        }
+
+        function movePhraseToSubtopic(fromPairId, fromSide, phraseId, toPairId, toSide, topic, subtopic) {
+          if (fromPairId !== toPairId || fromSide !== toSide) {
+            setStatus('A phrase chip can only be moved within the same row/side.', 'warn');
+            return;
+          }
+          const sideRow = getSide(fromPairId, fromSide);
+          const phrase = findPhraseById(sideRow, phraseId);
+          if (!phrase) return;
+          const moved = phrase.topic !== topic || phrase.subtopic !== subtopic;
+          phrase.topic = topic;
+          phrase.subtopic = subtopic;
+          phrase.modified = true;
+          if (moved) bumpSidePhraseVersion(sideRow);
+          selectPhrase(fromPairId, fromSide, phrase.id, null);
+          setStatus('Phrase moved.', 'good');
+        }
+
+        function moveSelectedChipToSubtopic(pairId, side, topic, subtopic) {
+          if (!state.selectedChip) return;
+          if (state.selectedChip.pairId !== pairId || state.selectedChip.side !== side) return;
+          movePhraseToSubtopic(state.selectedChip.pairId, state.selectedChip.side, state.selectedChip.phraseId, pairId, side, topic, subtopic);
+        }
+
+        function onDropToSubtopic(pairId, side, topic, subtopic, e) {
+          const drag = getDraggedInfo(e);
+          if (!drag) return;
+          if (drag.kind === 'chip') {
+            movePhraseToSubtopic(drag.pairId, drag.side, drag.chipId, pairId, side, topic, subtopic);
+            endChipDrag();
+            return;
+          }
+          if (!selectionAllowed(pairId, side)) {
+            setStatus('Selected text must be dropped onto the same row/side it came from.', 'warn');
+            return;
+          }
+          const draggedText = getDraggedText(e);
+          addPhrase(pairId, side, topic, subtopic, draggedText);
+          clearTextSelection(true);
+        }
+
+        function onSubtopicClick() { }
+
+        function addDialogTopicOptions() { return addDialogTopicOptionsList.value; }
+        function addDialogSubtopicOptions() { return addDialogSubtopicOptionsList.value; }
+
+        function canAddTopic(pairId, side, topic) {
+          if (!addAllowed(pairId, side)) return false;
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return false;
+          return findMissingSubtopics(sideRow, topic).length > 0;
+        }
+
+        function canAddAnyTopic(pairId, side) {
+          if (!addAllowed(pairId, side)) return false;
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return false;
+          return findMissingTopics(sideRow).length > 0;
+        }
+
+        function openAddDialog(pairId, side, presetTopic = '', presetSubtopic = '', topicLocked = false, drag = null) {
+          if (!addAllowed(pairId, side) && !drag) {
+            setStatus('First select text from this reason, or drag a phrase chip.', 'warn');
+            return;
+          }
+          const actualDrag = drag || getDraggedInfo(null);
+          if (actualDrag?.kind === 'chip' && (actualDrag.pairId !== pairId || actualDrag.side !== side)) {
+            setStatus('A phrase chip can only be moved within the same row/side.', 'warn');
+            return;
+          }
+          state.addDialog.open = true;
+          state.addDialog.pairId = pairId;
+          state.addDialog.side = side;
+          state.addDialog.phrase = actualDrag?.phrase || state.selectedText?.text || '';
+          state.addDialog.topicLocked = !!topicLocked;
+          state.addDialog.sourceChip = actualDrag?.kind === 'chip' ? actualDrag : null;
+
+          const sideRow = getSide(pairId, side);
+          const topicOptions = sideRow ? findMissingTopics(sideRow) : [];
+          state.addDialog.topic = presetTopic || topicOptions[0] || '';
+          const subOptions = sideRow && state.addDialog.topic ? findMissingSubtopics(sideRow, state.addDialog.topic) : [];
+          state.addDialog.subtopic = presetSubtopic && subOptions.includes(presetSubtopic) ? presetSubtopic : (subOptions[0] || '');
+          if (!state.addDialog.topic || !state.addDialog.subtopic) {
+            state.addDialog.open = false;
+            state.addDialog.sourceChip = null;
+            setStatus('No available topic/subtopic for this add action.', 'warn');
+          }
+        }
+
+        function confirmAddDialog() {
+          const d = state.addDialog;
+          if (!d.topic || !d.subtopic) {
+            setStatus('No available topic/subtopic for this add action.', 'warn');
+            return;
+          }
+          if (d.sourceChip) {
+            movePhraseToSubtopic(d.sourceChip.pairId, d.sourceChip.side, d.sourceChip.chipId, d.pairId, d.side, d.topic, d.subtopic);
+            endChipDrag();
+          } else {
+            addPhrase(d.pairId, d.side, d.topic, d.subtopic, d.phrase);
+          }
+          d.open = false;
+          d.sourceChip = null;
+          clearTextSelection(true);
+        }
+
+        function cancelAddDialog() {
+          state.addDialog.open = false;
+          state.addDialog.sourceChip = null;
+        }
+
+        function startChipDrag(pairId, side, chipId, e) {
+          const sideRow = getSide(pairId, side);
+          const chip = sideRow?.phrases.find(p => p.id === chipId);
+          if (!chip) return;
+          closeContextMenu();
+          const dragMeta = { kind: 'chip', pairId, side, chipId, phrase: chip.phrase };
+          if (e && e.dataTransfer) {
+            e.dataTransfer.setData('application/x-reviewer-chip', JSON.stringify({ pairId, side, chipId }));
+            e.dataTransfer.setData('text/reviewer-chip', JSON.stringify({ pairId, side, chipId }));
+            e.dataTransfer.setData('text/plain', chip.phrase);
+            e.dataTransfer.effectAllowed = 'move';
+            try { e.dataTransfer.dropEffect = 'move'; } catch { }
+            try { e.dataTransfer.setDragImage(e.currentTarget || e.target, 12, 12); } catch { }
+          }
+          if (e?.currentTarget?.classList) {
+            e.currentTarget.classList.add('dragging');
+            state._draggingChipEl = e.currentTarget;
+          } else {
+            state._draggingChipEl = null;
+          }
+          window.requestAnimationFrame(() => {
+            clearTextSelection(true);
+            selectPhrase(pairId, side, chipId, null);
+            state.draggedChip = dragMeta;
+            state.draggingChipId = chipId;
+          });
+          setStatus('Dragging phrase chip… drop it on another subtopic or [+].', 'info');
+        }
+
+        function endChipDrag() {
+          if (state._draggingChipEl?.classList) state._draggingChipEl.classList.remove('dragging');
+          state._draggingChipEl = null;
+          state.draggedChip = null;
+          state.draggingChipId = null;
+        }
+
+        function getDraggedInfo(e) {
+          const chipRaw = String(
+            e?.dataTransfer?.getData('application/x-reviewer-chip') ||
+            e?.dataTransfer?.getData('text/reviewer-chip') ||
+            ''
+          ).trim();
+          if (chipRaw) {
+            try {
+              const meta = JSON.parse(chipRaw);
+              return { kind: 'chip', ...meta, phrase: String(e?.dataTransfer?.getData('text/plain') || '').trim() };
+            } catch { }
+          }
+          const fromStateChip = state.draggedChip;
+          if (fromStateChip) return fromStateChip;
+          const fromDt = String(e?.dataTransfer?.getData('text/plain') || '').trim();
+          if (fromDt) return { kind: 'text', phrase: fromDt };
+          const sel = String(state.selectedText?.text || '').trim();
+          if (sel) return { kind: 'text', phrase: sel };
+          return null;
+        }
+
+        function getDraggedText(e) {
+          return String(getDraggedInfo(e)?.phrase || '').trim();
+        }
+
+        function applyContextMenuChoice(topic, subtopic) {
+          const ctx = state.contextMenu;
+          if (!ctx.open) return;
+          if (ctx.kind === 'phrase' && ctx.phraseId) {
+            movePhraseToSubtopic(ctx.pairId, ctx.side, ctx.phraseId, ctx.pairId, ctx.side, topic, subtopic);
+          } else if (ctx.kind === 'text' && ctx.text) {
+            addPhrase(ctx.pairId, ctx.side, topic, subtopic, ctx.text);
+            clearTextSelection(true);
+          }
+          closeContextMenu();
+        }
+
+        function sideImageUrl(sideRow) {
+          // Cache the URL on the sideRow object
+          const currentPrefix = config.imageUrlPrefix;
+          if (sideRow._imgUrlCache && sideRow._imgUrlCache.prefix === currentPrefix && sideRow._imgUrlCache.name === sideRow.imgName) {
+            return sideRow._imgUrlCache.url;
+          }
+          const url = buildImageUrl(currentPrefix, sideRow.imgName);
+          sideRow._imgUrlCache = { prefix: currentPrefix, name: sideRow.imgName, url };
+          return url;
+        }
+
+        async function openImageModal(sideRow) {
+          const url = sideImageUrl(sideRow);
+          state.imageModal.open = true;
+          state.imageModal.url = url;
+          state.imageModal.name = sideRow.imgName || '';
+          if (state.imageModal.name) {
+            try {
+              await navigator.clipboard.writeText(state.imageModal.name);
+              setStatus('Image name copied to clipboard.', 'good');
+            } catch (err) {
+              console.warn(err);
+              setStatus('Opened image preview. Clipboard copy was blocked.', 'warn');
+            }
+          }
+        }
+
+        function closeImageModal() {
+          state.imageModal.open = false;
+          state.imageModal.url = '';
+          state.imageModal.name = '';
+        }
+
+        function groupedForDisplay(sideRow) {
+          const version = sideRow._phraseVersion || 0;
+          if (sideRow._groupedCache && sideRow._groupedCache.version === version) {
+            return sideRow._groupedCache.result;
+          }
+          const result = groupedPhrases(sideRow);
+          sideRow._groupedCache = { version, result };
+          return result;
+        }
+
+        function getVisibleOccurrenceCount(sideRow, phraseId) {
+          return buildReasonLayout(sideRow).matches.filter(m => m.phraseId === phraseId).length;
+        }
+
+        function rangesOverlap(startA, endA, startB, endB) {
+          return !(endA <= startB || startA >= endB);
+        }
+
+        function previewWouldOverlap(sideRow, preview) {
+          if (!sideRow || !preview) return false;
+          const range = trimRangeToContent(sideRow.reason, preview.start, preview.end);
+          if (range.end <= range.start) return false;
+          const layout = buildReasonLayout(sideRow);
+          return layout.matches.some(m => {
+            if (m.phraseId === preview.phraseId && m.occurrenceIndex === preview.occurrenceIndex) return false;
+            return rangesOverlap(range.start, range.end, m.start, m.end);
+          });
+        }
+
+        function applyReasonBoundaryChange(drag) {
+          const sideRow = getSide(drag.pairId, drag.side);
+          const phrase = findPhraseById(sideRow, drag.phraseId);
+          if (!sideRow || !phrase) return;
+          const range = trimRangeToContent(sideRow.reason, drag.previewStart, drag.previewEnd);
+          const nextText = String(sideRow.reason.slice(range.start, range.end) || '').trim();
+          if (!nextText) {
+            setStatus('Phrase cannot be empty after resizing.', 'warn');
+            return;
+          }
+          if (nextText === phrase.phrase) {
+            selectPhraseOccurrenceByRange(drag.pairId, drag.side, drag.phraseId, drag.anchorStart, drag.anchorEnd);
+            return;
+          }
+
+          const visibleCount = drag.visibleCount;
+          const existing = findPhraseByText(sideRow, nextText, phrase.id);
+          if (visibleCount <= 1) {
+            if (existing) {
+              removePhraseById(drag.pairId, drag.side, phrase.id, false);
+              selectPhraseOccurrenceByRange(drag.pairId, drag.side, existing.id, range.start, range.end);
+              setStatus('Phrase resized by reusing the existing phrase.', 'good');
+              return;
+            }
+            phrase.phrase = nextText;
+            phrase.modified = true;
+            bumpSidePhraseVersion(sideRow);
+            selectPhraseOccurrenceByRange(drag.pairId, drag.side, phrase.id, range.start, range.end);
+            setStatus('Phrase resized.', 'good');
+            return;
+          }
+
+          const target = existing || upsertPhrase(drag.pairId, drag.side, phrase.topic, phrase.subtopic, nextText, { suppressStatus: true, silentSelect: true });
+          selectPhraseOccurrenceByRange(drag.pairId, drag.side, target.id, range.start, range.end);
+          setStatus(existing ? 'Existing phrase reused for the resized occurrence.' : 'Created a new phrase from the resized occurrence.', 'good');
+        }
+
+        function performReasonBoundaryDragUpdate(clientX, clientY) {
+          const drag = state.reasonDrag;
+          if (!drag) return;
+          const sideRow = getSide(drag.pairId, drag.side);
+          const root = getReasonBoxEl(drag.pairId, drag.side);
+          if (!sideRow || !root) return;
+          const rawOffset = getCharOffsetFromPoint(root, clientX, clientY);
+          if (rawOffset == null) return;
+          const boundary = chooseBoundaryIndex(sideRow.reason, drag.anchorStart, drag.anchorEnd, drag.handleSide, rawOffset);
+          const nextPreview = drag.handleSide === 'left'
+            ? { start: boundary, end: drag.anchorEnd }
+            : { start: drag.anchorStart, end: boundary };
+          const trimmed = trimRangeToContent(sideRow.reason, nextPreview.start, nextPreview.end);
+          if (trimmed.end <= trimmed.start) return;
+          if (previewWouldOverlap(sideRow, {
+            phraseId: drag.phraseId,
+            occurrenceIndex: drag.occurrenceIndex,
+            start: trimmed.start,
+            end: trimmed.end,
+          })) {
+            return;
+          }
+          if (drag.previewStart === trimmed.start && drag.previewEnd === trimmed.end) return;
+          drag.previewStart = trimmed.start;
+          drag.previewEnd = trimmed.end;
+        }
+
+        // Plain (non-reactive) bookkeeping for boundary drag RAF — avoids
+        // triggering Vue re-renders on every mousemove during drag.
+        let _reasonDragRaf = 0;
+        let _pendingReasonDragPoint = null;
+
+        function updateReasonBoundaryDrag(e) {
+          if (!state.reasonDrag || !e) return;
+          _pendingReasonDragPoint = { x: e.clientX, y: e.clientY };
+          if (_reasonDragRaf) return;
+          _reasonDragRaf = window.requestAnimationFrame(() => {
+            _reasonDragRaf = 0;
+            const point = _pendingReasonDragPoint;
+            _pendingReasonDragPoint = null;
+            if (point) performReasonBoundaryDragUpdate(point.x, point.y);
+          });
+        }
+
+        function stopReasonBoundaryDrag(applyChange = true) {
+          document.removeEventListener('mousemove', updateReasonBoundaryDrag);
+          document.removeEventListener('mouseup', finishReasonBoundaryDrag);
+          if (_reasonDragRaf) {
+            window.cancelAnimationFrame(_reasonDragRaf);
+            _reasonDragRaf = 0;
+          }
+          _pendingReasonDragPoint = null;
+          const drag = state.reasonDrag;
+          state.reasonDrag = null;
+          if (applyChange && drag) applyReasonBoundaryChange(drag);
+        }
+
+        function finishReasonBoundaryDrag(e) {
+          if (e) {
+            if (_reasonDragRaf) {
+              window.cancelAnimationFrame(_reasonDragRaf);
+              _reasonDragRaf = 0;
+            }
+            _pendingReasonDragPoint = null;
+            performReasonBoundaryDragUpdate(e.clientX, e.clientY);
+          }
+          stopReasonBoundaryDrag(true);
+        }
+
+        function startReasonBoundaryDrag(pairId, side, phraseId, occurrenceIndex, handleSide, e) {
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return;
+          const match = buildReasonLayout(sideRow).matches.find(m => m.phraseId === phraseId && m.occurrenceIndex === occurrenceIndex);
+          if (!match) return;
+          e.preventDefault();
+          e.stopPropagation();
+          clearTextSelection(true);
+          closeContextMenu();
+          selectPhrase(pairId, side, phraseId, { pairId, side, phraseId, occurrenceIndex, start: match.start, end: match.end });
+          state.reasonDrag = {
+            pairId,
+            side,
+            phraseId,
+            occurrenceIndex,
+            handleSide,
+            anchorStart: match.start,
+            anchorEnd: match.end,
+            previewStart: match.start,
+            previewEnd: match.end,
+            visibleCount: getVisibleOccurrenceCount(sideRow, phraseId),
+          };
+          document.addEventListener('mousemove', updateReasonBoundaryDrag);
+          document.addEventListener('mouseup', finishReasonBoundaryDrag);
+        }
+
+        function onReasonMouseDown(pairId, side, e) {
+          const handleEl = e.target?.closest?.('.boundary-handle');
+          if (!handleEl) return;
+          const phraseEl = handleEl.closest('.reason-phrase');
+          const sel = getDatasetSelectionFromPhraseEl(phraseEl, pairId, side);
+          if (!sel) return;
+          startReasonBoundaryDrag(pairId, side, sel.phraseId, sel.occurrenceIndex, handleEl.dataset.handleSide, e);
+        }
+
+        async function loadFromCsvText(csvText) {
+          state.loading = true;
+          try {
+            const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+            if (parsed.errors && parsed.errors.length) console.warn(parsed.errors);
+            const rows = parsed.data || [];
+            state.pairs = parseRowsToPairs(rows, config);
+            _rebuildPairMap();
+            state.rowsLoaded = rows.length;
+            clearPhraseSelection();
+            clearTextSelection();
+            closeContextMenu();
+            setStatus(`Loaded ${rows.length} rows.`, 'good');
+          } catch (err) {
+            console.error(err);
+            setStatus(`Failed to parse CSV: ${err}`, 'warn');
+          } finally {
+            state.loading = false;
+          }
+        }
+
+        async function loadFromUrl() {
+          if (!String(config.spreadsheetId || '').trim() || !String(config.sheetId || '').trim()) {
+            setStatus('Please provide Spreadsheet ID and Sheet ID.', 'warn');
+            return;
+          }
+          state.loading = true;
+          try {
+            const rows = await loadGoogleSheetJsonp(config);
+            state.pairs = parseRowsToPairs(rows, config);
+            _rebuildPairMap();
+            state.rowsLoaded = rows.length;
+            clearPhraseSelection();
+            clearTextSelection();
+            closeContextMenu();
+            setStatus(`Loaded ${rows.length} rows from Google Sheets.`, 'good');
+          } catch (err) {
+            console.error(err);
+            setStatus(`Failed to load Google Sheet data: ${err}`, 'warn');
+          } finally {
+            state.loading = false;
+          }
+        }
+
+        function exportRows() {
+          return state.pairs.map(pair => {
+            const row = { ...pair.originalRow };
+            row[config.morePhrasesCol] = serializePhraseTree(pair.more.phrases);
+            row[config.lessPhrasesCol] = serializePhraseTree(pair.less.phrases);
+            return row;
+          });
+        }
+
+        function exportCsvText() {
+          const rows = exportRows();
+          return Papa.unparse(rows);
+        }
+
+        function downloadCsv() {
+          const csv = exportCsvText();
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'reviewed_phrases.csv';
+          a.click();
+          URL.revokeObjectURL(url);
+          setStatus('CSV exported.', 'good');
+        }
+
+        async function copyPhraseJson(pairId, side) {
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return;
+          try {
+            await navigator.clipboard.writeText(serializePhraseTree(sideRow.phrases));
+            flashCopiedPhraseKey(`${pairId}__${side}`);
+            setStatus('Phrase JSON copied to clipboard.', 'good');
+          } catch (err) {
+            console.error(err);
+            setStatus('Clipboard copy failed. Your browser may block clipboard access.', 'warn');
+          }
+        }
+
+        async function copyCsvToClipboard() {
+          const rows = exportRows();
+          const tsv = Papa.unparse(rows, { delimiter: '\t', newline: '\n' });
+          try {
+            await navigator.clipboard.writeText(tsv);
+            setStatus('Tab-delimited table copied to clipboard.', 'good');
+          } catch (err) {
+            console.error(err);
+            setStatus('Clipboard copy failed. Your browser may block clipboard access.', 'warn');
+          }
+        }
+
+        watch(() => filters.topic, (val, oldVal) => {
+          if (val && !filterTopics.value.includes(val)) {
+            filters.topic = '';
+            return;
+          }
+          if (val !== oldVal) filters.subtopic = '';
+        });
+
+        watch(() => state.addDialog.topic, (val) => {
+          if (!val) return;
+          const subs = addDialogSubtopicOptionsList.value;
+          if (!subs.includes(state.addDialog.subtopic)) state.addDialog.subtopic = subs[0] || '';
+        });
+
+        window.addEventListener('keydown', handleGlobalKeydown);
+        document.addEventListener('selectionchange', handleSelectionChange);
+        document.addEventListener('mouseup', handleDocumentMouseUp);
+
+        onMounted(() => {
+          nextTick(() => {
+            updateFloatingLayout();
+            state.lastScrollY = window.scrollY || 0;
+          });
+          window.addEventListener('scroll', handleWindowScroll, { passive: true });
+          window.addEventListener('resize', handleWindowResize, { passive: true });
+          window.addEventListener('mousemove', handleMouseNearTop, { passive: true });
+        });
+
+        onBeforeUnmount(() => {
+          window.removeEventListener('scroll', handleWindowScroll);
+          window.removeEventListener('resize', handleWindowResize);
+          window.removeEventListener('mousemove', handleMouseNearTop);
+          window.removeEventListener('keydown', handleGlobalKeydown);
+          document.removeEventListener('selectionchange', handleSelectionChange);
+          document.removeEventListener('mouseup', handleDocumentMouseUp);
+          stopReasonBoundaryDrag(false);
+          if (state._scrollRaf) {
+            window.cancelAnimationFrame(state._scrollRaf);
+            state._scrollRaf = 0;
+          }
+          if (_selChangeRaf) {
+            window.cancelAnimationFrame(_selChangeRaf);
+            _selChangeRaf = 0;
+          }
+          if (_tooltipEl && _tooltipEl.parentNode) {
+            _tooltipEl.parentNode.removeChild(_tooltipEl);
+            _tooltipEl = null;
+          }
+        });
+
+        return {
+          topPanelRef,
+          filterPanelRef,
+          config,
+          filters,
+          state,
+          filterTopics,
+          filterSubtopics,
+          HELP_DOC,
+          filteredPairs,
+          TOPIC_META,
+          contextMenuSubtopics,
+          buildCsvUrl,
+          loadFromUrl,
+          openConfig,
+          closeConfig,
+          openHelp,
+          closeHelp,
+          groupedForDisplay,
+          beginEditChip,
+          saveEditChip,
+          selectPhrase,
+          isSelectedChip,
+          deleteSelectedPhrase,
+          sideImageUrl,
+          openImageModal,
+          closeImageModal,
+          hoverPhrase,
+          leavePhrase,
+          currentHoveredText,
+          chipInvalid,
+          phraseChipStyle,
+          renderReason,
+          onReasonMouseUp,
+          onReasonMouseDown,
+          onReasonClick,
+          onReasonContextMenu,
+          onReasonMouseOver,
+          onReasonMouseOut,
+          onChipContextMenu,
+          onDropToSubtopic,
+          onSubtopicClick,
+          openAddDialog,
+          confirmAddDialog,
+          cancelAddDialog,
+          clearTextSelection,
+          selectionAllowed,
+          copyCsvToClipboard,
+          copyPhraseJson,
+          downloadCsv,
+          addDialogTopicOptions,
+          addDialogSubtopicOptions,
+          addDialogTopicOptionsList,
+          addDialogSubtopicOptionsList,
+          canAddTopic,
+          canAddAnyTopic,
+          addAllowed,
+          startChipDrag,
+          endChipDrag,
+          getDraggedInfo,
+          closeContextMenu,
+          setContextMenuTopic,
+          applyContextMenuChoice,
+          onAppMouseDown,
+        };
+      },
+      template: `
+        <div class="app" @mousedown.capture="onAppMouseDown">
+          <div class="sticky-top" ref="topPanelRef">
+            <div class="panel">
+              <div class="toolbar-compact">
+                <div>
+                  <h2 style="margin: 0 0 4px;">Phrase Reviewer</h2>
+                  <div class="hint">Single-file reviewer for more/less image reasons and nested phrase JSON.</div>
+                </div>
+                <div class="row">
+                  <button class="btn primary" @click="loadFromUrl" :disabled="state.loading">{{ state.loading ? 'Loading...' : 'Load Google Sheet' }}</button>
+                  <button class="btn" @click="downloadCsv" :disabled="!state.pairs.length">Export CSV</button>
+                  <button class="btn" @click="copyCsvToClipboard" :disabled="!state.pairs.length">Copy for Sheet</button>
+                  <button class="btn icon-btn" @click="openConfig" title="Configuration">⚙️</button>
+                </div>
+              </div>
+
+              <div v-if="state.status" class="status" :class="state.statusType" style="margin-top:10px;">{{ state.status }}</div>
+              <div class="hint" style="margin-top: 8px;">Loaded rows: {{ state.rowsLoaded }} · Visible pair cards: {{ filteredPairs.length }}</div>
+            </div>
+          </div>
+
+          <div class="filter-floating-spacer" :style="{ height: state.filterFloating ? (state.filterHeight + 'px') : '0px' }"></div>
+          <div ref="filterPanelRef" class="panel filter-panel" :class="{ floating: state.filterFloating, hidden: state.filterFloating && state.filterHidden }">
+            <div class="toolbar-grid" style="grid-template-columns: 140px 1fr 1fr 1fr auto;">
+              <div class="field">
+                <label>Complex</label>
+                <select v-model="filters.complex">
+                  <option value="all">All</option>
+                  <option value="more">More</option>
+                  <option value="less">Less</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Topic</label>
+                <select v-model="filters.topic">
+                  <option value="">All Topics</option>
+                  <option v-for="topic in filterTopics" :key="topic" :value="topic">{{ topic }}</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Subtopic</label>
+                <select v-model="filters.subtopic">
+                  <option value="">All Subtopics</option>
+                  <option v-for="sub in filterSubtopics" :key="sub" :value="sub">{{ sub }}</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Phrase contains</label>
+                <input v-model="filters.phrase" placeholder="search phrase text" />
+              </div>
+              <div class="toggle-field">
+                <label>Phrases</label>
+                <div class="toggle-wrap">
+                  <div class="toggle-track" :class="{ on: filters.showPhrases }" @click="filters.showPhrases = !filters.showPhrases">
+                    <div class="toggle-knob"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn primary help-fab" @click="openHelp" title="Topic and subtopic guide">
+            <span class="help-fab-icon">?</span>
+            <span>Topic Definitions</span>
+          </button>
+
+          <div v-if="state.pairs.length" class="grid-head" :class="{ 'no-phrases': !filters.showPhrases }">
+            <div>Image</div>
+            <div>Reason</div>
+            <div v-if="filters.showPhrases">Phrases</div>
+          </div>
+
+          <div v-for="item in filteredPairs" :key="item.pair.pairId"
+               v-memo="[item.pair.more._phraseVersion, item.pair.less._phraseVersion, item.showMore, item.showLess, filters.showPhrases, state.selectedChip && state.selectedChip.pairId === item.pair.pairId ? state.selectedChip.phraseId : '', state.reasonSelection && state.reasonSelection.pairId === item.pair.pairId ? state.reasonSelection.start : -1, state.reasonDrag && state.reasonDrag.pairId === item.pair.pairId ? state.reasonDrag.previewStart : -1, state.reasonDrag && state.reasonDrag.pairId === item.pair.pairId ? state.reasonDrag.previewEnd : -1, state.draggingChipId || '', state.editingChipId || '', state.selectedText && state.selectedText.pairId === item.pair.pairId ? state.selectedText.text : '', state.copiedPhraseKey]"
+               class="pair-card">
+            <div class="pair-title">Pair row {{ item.pair.rowIndex + 2 }}</div>
+
+            <div v-if="item.showMore" class="side-row more" :class="{ 'no-phrases': !filters.showPhrases }" :data-side-key="item.pair.pairId + '__more'">
+              <div class="image-box">
+                <img v-if="sideImageUrl(item.pair.more)" :src="sideImageUrl(item.pair.more)" :alt="item.pair.more.imgName" @click="openImageModal(item.pair.more)" />
+                <div v-else class="hint">No image URL</div>
+                <div class="image-name mono">{{ item.pair.more.imgName || '(empty)' }}</div>
+                <div v-if="item.pair.more.parseError" class="status warn" style="margin:0;">Phrase JSON parse error</div>
+              </div>
+
+              <div class="reason-box"
+                   :data-reason-box="item.pair.pairId + '__more'"
+                   @mouseup="onReasonMouseUp(item.pair.pairId, 'more')"
+                   @mousedown="onReasonMouseDown(item.pair.pairId, 'more', $event)"
+                   @click="onReasonClick(item.pair.pairId, 'more', $event)"
+                   @contextmenu.prevent="onReasonContextMenu(item.pair.pairId, 'more', $event)"
+                   @mouseover="onReasonMouseOver(item.pair.pairId, 'more', $event)"
+                   @mouseout="onReasonMouseOut(item.pair.pairId, 'more', $event)"
+                   v-html="renderReason(item.pair.more, item.pair.pairId, 'more')"></div>
+
+              <div v-if="filters.showPhrases" class="phrases-box">
+                <button class="btn icon-btn phrases-copy-btn" :class="{ copied: state.copiedPhraseKey === (item.pair.pairId + '__more') }" @click="copyPhraseJson(item.pair.pairId, 'more')" title="Copy phrase JSON">{{ state.copiedPhraseKey === (item.pair.pairId + '__more') ? "✓" : "⧉" }}</button>
+                <template v-for="(subMap, topic) in groupedForDisplay(item.pair.more)" :key="topic">
+                  <div class="topic-block">
+                    <div class="topic-name">{{ topic }}</div>
+                    <template v-for="(chips, subtopic) in subMap" :key="topic + '__' + subtopic">
+                      <div class="subtopic-row"
+                           :class="{ 'drop-hover': addAllowed(item.pair.pairId, 'more') }"
+                           @dragover.prevent
+                           @drop.prevent.stop="onDropToSubtopic(item.pair.pairId, 'more', topic, subtopic, $event)">
+                        <div class="subtopic-name">{{ subtopic }}:</div>
+                        <div class="chips-wrap">
+                          <div v-for="chip in chips"
+                               :key="chip.id"
+                               class="chip"
+                               :data-phrase-id="chip.id"
+                               :class="{ selected: isSelectedChip(item.pair.pairId, 'more', chip.id), invalid: chipInvalid(item.pair.more, chip), editing: chip.editing, dragging: state.draggingChipId === chip.id }"
+                               :style="phraseChipStyle(chip)"
+                               @click.stop="selectPhrase(item.pair.pairId, 'more', chip.id, null)"
+                               @contextmenu.prevent.stop="onChipContextMenu(item.pair.pairId, 'more', chip.id, $event)"
+                               @mousedown.stop
+                               @dblclick.stop="beginEditChip(item.pair.pairId, 'more', chip.id)"
+                               @mouseenter="hoverPhrase(item.pair.pairId, 'more', chip.id)"
+                               @mouseleave="leavePhrase(item.pair.pairId, 'more', chip.id)"
+                               :draggable="!chip.editing"
+                               @dragstart.stop="startChipDrag(item.pair.pairId, 'more', chip.id, $event)"
+                               @dragend.stop="endChipDrag()">
+                            <template v-if="chip.editing">
+                              <input :data-chip-input="chip.id"
+                                     v-model="chip._draft"
+                                     @keydown.enter.prevent="saveEditChip(item.pair.pairId, 'more', chip.id, true)"
+                                     @keydown.esc.prevent="saveEditChip(item.pair.pairId, 'more', chip.id, false)"
+                                     @blur="saveEditChip(item.pair.pairId, 'more', chip.id, true)" />
+                            </template>
+                            <template v-else>
+                              <span class="chip-text mono">{{ chip.phrase }}</span>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                    <div v-if="canAddTopic(item.pair.pairId, 'more', topic)" class="plus-row">
+                      <div class="drop-plus"
+                           :class="{ 'drop-hover': addAllowed(item.pair.pairId, 'more') }"
+                           @click="openAddDialog(item.pair.pairId, 'more', topic, '', true)"
+                           @dragover.prevent
+                           @drop.prevent.stop="openAddDialog(item.pair.pairId, 'more', topic, '', true, getDraggedInfo($event))">+</div>
+                      
+                    </div>
+                  </div>
+                </template>
+
+                <div v-if="canAddAnyTopic(item.pair.pairId, 'more')" class="top-level-add plus-row">
+                  <div class="drop-plus"
+                       :class="{ 'drop-hover': addAllowed(item.pair.pairId, 'more') }"
+                       @click="openAddDialog(item.pair.pairId, 'more')"
+                       @dragover.prevent
+                       @drop.prevent.stop="openAddDialog(item.pair.pairId, 'more', '', '', false, getDraggedInfo($event))">+</div>
+                  
+                </div>
+              </div>
+            </div>
+
+            <div v-if="item.showLess" class="side-row less" :class="{ 'no-phrases': !filters.showPhrases }" :data-side-key="item.pair.pairId + '__less'">
+              <div class="image-box">
+                <img v-if="sideImageUrl(item.pair.less)" :src="sideImageUrl(item.pair.less)" :alt="item.pair.less.imgName" @click="openImageModal(item.pair.less)" />
+                <div v-else class="hint">No image URL</div>
+                <div class="image-name mono">{{ item.pair.less.imgName || '(empty)' }}</div>
+                <div v-if="item.pair.less.parseError" class="status warn" style="margin:0;">Phrase JSON parse error</div>
+              </div>
+
+              <div class="reason-box"
+                   :data-reason-box="item.pair.pairId + '__less'"
+                   @mouseup="onReasonMouseUp(item.pair.pairId, 'less')"
+                   @mousedown="onReasonMouseDown(item.pair.pairId, 'less', $event)"
+                   @click="onReasonClick(item.pair.pairId, 'less', $event)"
+                   @contextmenu.prevent="onReasonContextMenu(item.pair.pairId, 'less', $event)"
+                   @mouseover="onReasonMouseOver(item.pair.pairId, 'less', $event)"
+                   @mouseout="onReasonMouseOut(item.pair.pairId, 'less', $event)"
+                   v-html="renderReason(item.pair.less, item.pair.pairId, 'less')"></div>
+
+              <div v-if="filters.showPhrases" class="phrases-box">
+                <button class="btn icon-btn phrases-copy-btn" :class="{ copied: state.copiedPhraseKey === (item.pair.pairId + '__less') }" @click="copyPhraseJson(item.pair.pairId, 'less')" title="Copy phrase JSON">{{ state.copiedPhraseKey === (item.pair.pairId + '__less') ? "✓" : "⧉" }}</button>
+                <template v-for="(subMap, topic) in groupedForDisplay(item.pair.less)" :key="topic">
+                  <div class="topic-block">
+                    <div class="topic-name">{{ topic }}</div>
+                    <template v-for="(chips, subtopic) in subMap" :key="topic + '__' + subtopic">
+                      <div class="subtopic-row"
+                           :class="{ 'drop-hover': addAllowed(item.pair.pairId, 'less') }"
+                           @dragover.prevent
+                           @drop.prevent.stop="onDropToSubtopic(item.pair.pairId, 'less', topic, subtopic, $event)">
+                        <div class="subtopic-name">{{ subtopic }}:</div>
+                        <div class="chips-wrap">
+                          <div v-for="chip in chips"
+                               :key="chip.id"
+                               class="chip"
+                               :data-phrase-id="chip.id"
+                               :class="{ selected: isSelectedChip(item.pair.pairId, 'less', chip.id), invalid: chipInvalid(item.pair.less, chip), editing: chip.editing, dragging: state.draggingChipId === chip.id }"
+                               :style="phraseChipStyle(chip)"
+                               @click.stop="selectPhrase(item.pair.pairId, 'less', chip.id, null)"
+                               @contextmenu.prevent.stop="onChipContextMenu(item.pair.pairId, 'less', chip.id, $event)"
+                               @mousedown.stop
+                               @dblclick.stop="beginEditChip(item.pair.pairId, 'less', chip.id)"
+                               @mouseenter="hoverPhrase(item.pair.pairId, 'less', chip.id)"
+                               @mouseleave="leavePhrase(item.pair.pairId, 'less', chip.id)"
+                               :draggable="!chip.editing"
+                               @dragstart.stop="startChipDrag(item.pair.pairId, 'less', chip.id, $event)"
+                               @dragend.stop="endChipDrag()">
+                            <template v-if="chip.editing">
+                              <input :data-chip-input="chip.id"
+                                     v-model="chip._draft"
+                                     @keydown.enter.prevent="saveEditChip(item.pair.pairId, 'less', chip.id, true)"
+                                     @keydown.esc.prevent="saveEditChip(item.pair.pairId, 'less', chip.id, false)"
+                                     @blur="saveEditChip(item.pair.pairId, 'less', chip.id, true)" />
+                            </template>
+                            <template v-else>
+                              <span class="chip-text mono">{{ chip.phrase }}</span>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                    <div v-if="canAddTopic(item.pair.pairId, 'less', topic)" class="plus-row">
+                      <div class="drop-plus"
+                           :class="{ 'drop-hover': addAllowed(item.pair.pairId, 'less') }"
+                           @click="openAddDialog(item.pair.pairId, 'less', topic, '', true)"
+                           @dragover.prevent
+                           @drop.prevent.stop="openAddDialog(item.pair.pairId, 'less', topic, '', true, getDraggedInfo($event))">+</div>
+                      
+                    </div>
+                  </div>
+                </template>
+
+                <div v-if="canAddAnyTopic(item.pair.pairId, 'less')" class="top-level-add plus-row">
+                  <div class="drop-plus"
+                       :class="{ 'drop-hover': addAllowed(item.pair.pairId, 'less') }"
+                       @click="openAddDialog(item.pair.pairId, 'less')"
+                       @dragover.prevent
+                       @drop.prevent.stop="openAddDialog(item.pair.pairId, 'less', '', '', false, getDraggedInfo($event))">+</div>
+                  
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="state.contextMenu.open" class="context-menu-mask" @mousedown="closeContextMenu"></div>
+          <div v-if="state.contextMenu.open" class="context-menu" :style="{ left: state.contextMenu.x + 'px', top: state.contextMenu.y + 'px' }" @mousedown.stop @click.stop>
+            <div class="context-menu-meta mono">{{ state.contextMenu.text }}</div>
+            <div class="context-menu-columns">
+              <div class="context-menu-col">
+                <div class="context-menu-title">Topic</div>
+                <button v-for="topic in filterTopics"
+                        :key="'ctx-topic-' + topic"
+                        class="context-menu-item"
+                        :class="{ active: state.contextMenu.activeTopic === topic }"
+                        @mouseenter="setContextMenuTopic(topic)"
+                        @click="setContextMenuTopic(topic)">{{ topic }}</button>
+              </div>
+              <div class="context-menu-col">
+                <div class="context-menu-title">Subtopic</div>
+                <button v-for="sub in contextMenuSubtopics"
+                        :key="'ctx-sub-' + state.contextMenu.activeTopic + '__' + sub"
+                        class="context-menu-item"
+                        @click="applyContextMenuChoice(state.contextMenu.activeTopic, sub)">{{ sub }}</button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="state.showConfig" class="modal-mask" @click.self="closeConfig">
+            <div class="modal" style="width:min(1100px, 100%); max-height: 92vh; overflow:auto;">
+              <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h3 style="margin:0;">Configuration</h3>
+                <button class="btn" @click="closeConfig">Close</button>
+              </div>
+
+              <div class="toolbar-grid" style="margin-top: 10px; grid-template-columns: repeat(3, minmax(0,1fr));">
+                <div class="field">
+                  <label>Spreadsheet ID</label>
+                  <input v-model="config.spreadsheetId" placeholder="Google Sheets spreadsheet_id" />
+                </div>
+                <div class="field">
+                  <label>Sheet ID (gid)</label>
+                  <input v-model="config.sheetId" placeholder="gid / sheet_id" />
+                </div>
+                <div class="field">
+                  <label>Image URL Prefix</label>
+                  <input v-model="config.imageUrlPrefix" placeholder="https://.../" />
+                </div>
+              </div>
+
+              <div class="toolbar-grid" style="margin-top: 10px; grid-template-columns: repeat(3, minmax(0,1fr));">
+                <div class="field">
+                  <label>More ImgName column</label>
+                  <input v-model="config.moreImgCol" />
+                </div>
+                <div class="field">
+                  <label>More Reason column</label>
+                  <input v-model="config.moreReasonCol" />
+                </div>
+                <div class="field">
+                  <label>More Phrases column</label>
+                  <input v-model="config.morePhrasesCol" />
+                </div>
+              </div>
+
+              <div class="toolbar-grid" style="margin-top: 10px; grid-template-columns: repeat(3, minmax(0,1fr));">
+                <div class="field">
+                  <label>Less ImgName column</label>
+                  <input v-model="config.lessImgCol" />
+                </div>
+                <div class="field">
+                  <label>Less Reason column</label>
+                  <input v-model="config.lessReasonCol" />
+                </div>
+                <div class="field">
+                  <label>Less Phrases column</label>
+                  <input v-model="config.lessPhrasesCol" />
+                </div>
+              </div>
+            </div>
+            </div>
+          </div>
+
+          <div v-if="state.showHelp" class="modal-mask" @click.self="closeHelp">
+            <div class="modal help-modal">
+              <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div>
+                  <h3 style="margin:0 0 4px;">Topic &amp; Subtopic Guide</h3>
+                  <div class="hint">Definitions for the current topic system. The generic “Others” bucket is intentionally omitted here.</div>
+                </div>
+                <button class="btn" @click="closeHelp">Close</button>
+              </div>
+
+              <div class="help-doc">
+                <div v-for="topicItem in HELP_DOC" :key="topicItem.topic" class="help-topic-card">
+                  <h4>{{ topicItem.topic }}</h4>
+                  <p class="help-topic-def">{{ topicItem.definition }}</p>
+                  <div class="help-subtopic-list">
+                    <div v-for="sub in topicItem.subtopics" :key="topicItem.topic + '__' + sub.name" class="help-subtopic-item">
+                      <div class="help-subtopic-title">{{ sub.name }}</div>
+                      <p class="help-subtopic-def">{{ sub.definition }}</p>
+                      <div v-if="sub.examples" class="help-example"><strong>Examples:</strong> {{ sub.examples }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="state.imageModal.open" class="modal-mask" @click.self="closeImageModal">
+            <div class="modal preview-modal">
+              <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div>
+                  <h3 style="margin:0 0 4px;">{{ state.imageModal.name || 'Image preview' }}</h3>
+                  <div class="hint">Image name has been copied to the clipboard when possible.</div>
+                </div>
+                <button class="btn" @click="closeImageModal">Close</button>
+              </div>
+              <div class="preview-image-wrap">
+                <img v-if="state.imageModal.url" :src="state.imageModal.url" :alt="state.imageModal.name" />
+                <div v-else class="status warn">No image URL available.</div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="state.addDialog.open" class="modal-mask" @click.self="cancelAddDialog">
+            <div class="modal">
+              <h3>Add Phrase</h3>
+              <div class="field">
+                <label>Phrase</label>
+                <input v-model="state.addDialog.phrase" class="mono" />
+              </div>
+              <div class="toolbar-grid" style="grid-template-columns: 1fr 1fr; margin-top: 10px;">
+                <div class="field">
+                  <label>Topic</label>
+                  <select v-model="state.addDialog.topic" :disabled="state.addDialog.topicLocked">
+                    <option v-for="topic in addDialogTopicOptionsList" :key="topic" :value="topic">{{ topic }}</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Subtopic</label>
+                  <select v-model="state.addDialog.subtopic">
+                    <option v-for="sub in addDialogSubtopicOptionsList" :key="sub" :value="sub">{{ sub }}</option>
+                  </select>
+                </div>
+              </div>
+              <div class="hint" style="margin-top: 8px;">The phrase should ideally be an exact substring from the corresponding reason. This tool warns on mismatch but does not block manual edits.</div>
+              <div class="footer-actions">
+                <button class="btn" @click="cancelAddDialog">Cancel</button>
+                <button class="btn primary" @click="confirmAddDialog">Add</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+    }).mount('#app');
+  </script>
+</body>
+
+</html>
