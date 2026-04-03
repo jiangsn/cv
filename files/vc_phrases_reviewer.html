@@ -1932,6 +1932,11 @@
           continue;
         }
         // Plain word
+        if (ch === '!') {
+          // Bare "!" not followed by a token — skip it
+          i++;
+          continue;
+        }
         let word = '';
         while (i < raw.length && !/[\s|"!()]/.test(raw[i])) { word += raw[i]; i++; }
         if (word) out.push({ type: 'word', value: word });
@@ -1978,8 +1983,10 @@
       function parseAnd() {
         const children = [];
         while (peek() && !(peek().type === 'sep' && peek().value === '|') && !(peek().type === 'sep' && peek().value === ')')) {
+          const before = pos;
           const node = parseAtom();
           if (node) children.push(node);
+          if (pos === before) break; // safety: no progress
         }
         if (!children.length) return null;
         if (children.length === 1) return children[0];
@@ -2401,7 +2408,7 @@
           });
         }
 
-        // Guard against double-fire (enter triggers save → editing=false → input removed → blur fires save again)
+        // FIX 2: Guard against double-fire (enter triggers save → editing=false → input removed → blur fires save again)
         function saveEditChip(pairId, side, phraseId, save = true) {
           const sideRow = getSide(pairId, side);
           if (!sideRow) return;
