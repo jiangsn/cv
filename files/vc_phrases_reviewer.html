@@ -428,6 +428,9 @@
       font-weight: 700;
       margin-bottom: 5px;
       font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
 
     .subtopic-row {
@@ -450,6 +453,9 @@
       font-weight: 600;
       padding-top: 4px;
       word-break: break-word;
+      display: flex;
+      align-items: center;
+      gap: 3px;
     }
 
     .chips-wrap {
@@ -854,6 +860,72 @@
       color: #e2e8f0;
     }
 
+    /* ── Inline help tooltip button ───────────────────── */
+    .info-help-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 15px;
+      height: 15px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #f1f5f9;
+      color: #94a3b8;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      flex-shrink: 0;
+      transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .info-help-btn:hover {
+      background: #e0e7ff;
+      color: #4f46e5;
+      border-color: #a5b4fc;
+    }
+
+    .info-tooltip {
+      position: fixed;
+      z-index: 130;
+      background: #1e293b;
+      color: #e2e8f0;
+      font-size: 13px;
+      line-height: 1.55;
+      border-radius: 10px;
+      padding: 10px 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      max-width: 360px;
+      width: max-content;
+      pointer-events: auto;
+    }
+
+    .info-tooltip .info-tt-title {
+      font-weight: 700;
+      color: #93c5fd;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+
+    .info-tooltip .info-tt-def {
+      color: #e2e8f0;
+      margin: 0;
+      font-size: 12.5px;
+    }
+
+    .info-tooltip .info-tt-examples {
+      margin-top: 6px;
+      font-size: 11.5px;
+      color: #94a3b8;
+      line-height: 1.4;
+    }
+
+    .info-tooltip .info-tt-examples strong {
+      color: #a5b4fc;
+    }
+
     /* ── Hide-phrases 2-column layout ─────────────────── */
     .grid-head.no-phrases,
     .side-row.no-phrases {
@@ -1068,7 +1140,7 @@
       },
       {
         topic: "Immediacy / Cognitive Load",
-        definition: "The effect on observers in terms of mental effort, including the time and cognitive resources needed to inspect, compare, or make sense of the visualization. This reflects the viewer’s experience, not the cause.",
+        definition: "The effect on observers in terms of mental effort, including the time and cognitive resources needed to inspect, compare, or make sense of the visualization. This reflects the viewer's experience, not the cause.",
         subtopics: [
           {
             name: "Interpretive Difficulty",
@@ -1088,6 +1160,15 @@
         ],
       },
     ];
+
+    // ── Build a lookup map for HELP_DOC definitions ──────────────────
+    const HELP_LOOKUP = {};
+    for (const item of HELP_DOC) {
+      HELP_LOOKUP[item.topic] = { definition: item.definition, subtopics: {} };
+      for (const sub of item.subtopics) {
+        HELP_LOOKUP[item.topic].subtopics[sub.name] = { definition: sub.definition, examples: sub.examples || '' };
+      }
+    }
 
     const DEFAULT_CONFIG = {
       spreadsheetId: "1wFB1SdEX0wOInqcCDE1tHE-Wg0JDbMnKVne6SezI6FA",
@@ -1520,8 +1601,6 @@
         : null;
       const preview = drag ? trimRangeToContent(String(sideRow?.reason || ''), drag.previewStart, drag.previewEnd) : null;
       const selectedPhraseId = getSelectedPhraseId(state, pairId, side);
-      // NOTE: hoveredPhraseId deliberately excluded from render to avoid costly re-render on every hover.
-      // Hover highlighting is handled via direct DOM manipulation in hoverPhrase/leavePhrase.
       const activeSelection = drag ? {
         pairId,
         side,
@@ -1742,6 +1821,7 @@
         const state = reactive({
           loading: false,
           rowsLoaded: 0,
+          loadGeneration: 0,
           pairs: [],
           status: '',
           statusType: 'info',
@@ -1870,6 +1950,8 @@
         });
 
         const filteredPairs = computed(() => {
+          // Touch loadGeneration so filteredPairs recomputes on reload
+          const _gen = state.loadGeneration;
           return state.pairs
             .map(pair => {
               const showMore = sideMatchesFilters(pair.more, filters);
@@ -2033,13 +2115,16 @@
           });
         }
 
+        // Guard against double-fire (enter triggers save → editing=false → input removed → blur fires save again)
         function saveEditChip(pairId, side, phraseId, save = true) {
           const sideRow = getSide(pairId, side);
           if (!sideRow) return;
           const phrase = findPhraseById(sideRow, phraseId);
           if (!phrase) return;
+          // If already not editing, this is a duplicate call (e.g. blur after enter) — skip
+          if (!phrase.editing) return;
           if (save) {
-            const next = String(phrase._draft || '').trim();
+            const next = String(phrase._draft ?? phrase.phrase ?? '').trim();
             if (!next) {
               setStatus('Phrase cannot be empty.', 'warn');
               return;
@@ -2048,7 +2133,9 @@
               const existing = findPhraseByText(sideRow, next, phrase.id);
               if (existing) {
                 if (existing.topic === phrase.topic && existing.subtopic === phrase.subtopic) {
+                  phrase.editing = false;
                   state.editingChipId = null;
+                  delete phrase._draft;
                   removePhraseById(pairId, side, phrase.id, false);
                   selectPhrase(pairId, side, existing.id, null);
                   setStatus('Merged with the existing phrase.', 'good');
@@ -2098,13 +2185,10 @@
         }
 
         // ── Fully non-reactive hover system ──────────────────────────────
-        // Hover state is stored outside Vue reactivity to avoid triggering
-        // component re-renders on every mouse enter/leave.
         const _hoverMap = new Map(); // "pairId__side" → phraseId
 
         function _applyHoverDom(pairId, side, phraseId) {
           const sideKey = `${pairId}__${side}`;
-          // Reason-phrase spans
           const reasonBox = getReasonBoxEl(pairId, side);
           if (reasonBox) {
             const old = reasonBox.querySelectorAll('.reason-phrase.is-hovered');
@@ -2114,7 +2198,6 @@
               for (let i = 0; i < els.length; i++) els[i].classList.add('is-hovered');
             }
           }
-          // Chip elements (scoped to the side-row via data-side-key)
           const sideRowEl = document.querySelector(`[data-side-key="${CSS.escape(sideKey)}"]`);
           if (sideRowEl) {
             const old = sideRowEl.querySelectorAll('.chip.hovered');
@@ -2122,7 +2205,6 @@
             if (phraseId) {
               const els = sideRowEl.querySelectorAll(`.chip[data-phrase-id="${CSS.escape(phraseId)}"]`);
               for (let i = 0; i < els.length; i++) {
-                // Don't add hovered if chip is already selected
                 if (!els[i].classList.contains('selected')) els[i].classList.add('hovered');
               }
             }
@@ -2172,12 +2254,10 @@
           if (!topic) { _hidePhraseTooltip(); return; }
           const tt = _ensureTooltip();
           tt.innerHTML = `<span class="tt-topic">${escapeHtml(topic)}</span><span class="tt-sep">›</span><span class="tt-sub">${escapeHtml(subtopic || 'Others')}</span>`;
-          // Position near the mouse, slightly above
           tt.style.left = '0px';
           tt.style.top = '0px';
           tt.classList.add('visible');
           _tooltipVisible = true;
-          // Use RAF to measure and position after layout
           if (_tooltipRaf) cancelAnimationFrame(_tooltipRaf);
           _tooltipRaf = requestAnimationFrame(() => {
             _tooltipRaf = 0;
@@ -2199,13 +2279,80 @@
           if (_tooltipRaf) { cancelAnimationFrame(_tooltipRaf); _tooltipRaf = 0; }
         }
 
+        // ── Inline info tooltip (FIX 3) ──────────────────────────────────
+        let _infoTipEl = null;
+        let _infoTipTimer = 0;
+
+        function _ensureInfoTip() {
+          if (_infoTipEl) return _infoTipEl;
+          _infoTipEl = document.createElement('div');
+          _infoTipEl.className = 'info-tooltip';
+          _infoTipEl.style.display = 'none';
+          document.body.appendChild(_infoTipEl);
+          return _infoTipEl;
+        }
+
+        function showInfoTip(topic, subtopic, e) {
+          e.stopPropagation();
+          e.preventDefault();
+          const el = _ensureInfoTip();
+          const topicData = HELP_LOOKUP[topic];
+          let html = '';
+          if (subtopic && topicData?.subtopics?.[subtopic]) {
+            const sub = topicData.subtopics[subtopic];
+            html = `<div class="info-tt-title">${escapeHtml(subtopic)}</div>`;
+            html += `<p class="info-tt-def">${escapeHtml(sub.definition)}</p>`;
+            if (sub.examples) html += `<div class="info-tt-examples"><strong>Examples:</strong> ${escapeHtml(sub.examples)}</div>`;
+          } else if (topicData) {
+            html = `<div class="info-tt-title">${escapeHtml(topic)}</div>`;
+            html += `<p class="info-tt-def">${escapeHtml(topicData.definition)}</p>`;
+          } else {
+            html = `<div class="info-tt-title">${escapeHtml(topic)}</div><p class="info-tt-def">No definition available.</p>`;
+          }
+          el.innerHTML = html;
+          el.style.display = 'block';
+          // Position near the button
+          const btnRect = e.currentTarget.getBoundingClientRect();
+          requestAnimationFrame(() => {
+            const tipRect = el.getBoundingClientRect();
+            let top = btnRect.bottom + 6;
+            if (top + tipRect.height > window.innerHeight - 8) {
+              top = btnRect.top - tipRect.height - 6;
+            }
+            let left = btnRect.left + btnRect.width / 2 - tipRect.width / 2;
+            left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+            el.style.left = `${left}px`;
+            el.style.top = `${top}px`;
+          });
+          // Auto-hide after a delay, or on next click
+          clearTimeout(_infoTipTimer);
+          _infoTipTimer = setTimeout(hideInfoTip, 5000);
+          // Close on next outside click
+          setTimeout(() => {
+            document.addEventListener('mousedown', _infoTipOutsideClick, { once: true });
+          }, 0);
+        }
+
+        function _infoTipOutsideClick(e) {
+          if (_infoTipEl && _infoTipEl.contains(e.target)) {
+            // Click inside tooltip — re-register
+            document.addEventListener('mousedown', _infoTipOutsideClick, { once: true });
+            return;
+          }
+          hideInfoTip();
+        }
+
+        function hideInfoTip() {
+          clearTimeout(_infoTipTimer);
+          if (_infoTipEl) _infoTipEl.style.display = 'none';
+        }
+
         function onReasonMouseOver(pairId, side, e) {
           const phraseEl = e.target?.closest?.('.reason-phrase');
           const phraseId = phraseEl?.dataset?.phraseId;
           const key = `${pairId}__${side}`;
           const current = _hoverMap.get(key) || null;
           if (phraseId && phraseId === current) {
-            // Same phrase but maybe different element — update tooltip position
             _showPhraseTooltip(phraseEl, e.clientX, e.clientY);
             return;
           }
@@ -2231,8 +2378,7 @@
         }
 
         function currentHoveredText(sideRow) {
-          // Note: uses non-reactive hover state; not tracked by Vue
-          const key = sideRow ? Object.keys(TOPIC_META).length : ''; // dummy, won't match
+          const key = sideRow ? Object.keys(TOPIC_META).length : '';
           for (const [k, phraseId] of _hoverMap) {
             if (phraseId) {
               const hit = sideRow?.phrases?.find(p => p.id === phraseId);
@@ -2243,7 +2389,6 @@
         }
 
         function chipInvalid(sideRow, phrase) {
-          // Use a cache on the sideRow to avoid repeating string search
           if (!sideRow._invalidCache || sideRow._invalidCache.version !== sideRow._phraseVersion) {
             sideRow._invalidCache = { version: sideRow._phraseVersion, map: new Map() };
           }
@@ -2363,7 +2508,7 @@
 
         function shouldKeepPhraseSelectionTarget(target) {
           if (!target || typeof target.closest !== 'function') return false;
-          return !!target.closest('.chip, .reason-phrase, .boundary-handle, .context-menu, input, textarea, select, button, .drop-plus');
+          return !!target.closest('.chip, .reason-phrase, .boundary-handle, .context-menu, input, textarea, select, button, .drop-plus, .info-tooltip');
         }
 
         function onAppMouseDown(e) {
@@ -2604,7 +2749,6 @@
         }
 
         function sideImageUrl(sideRow) {
-          // Cache the URL on the sideRow object
           const currentPrefix = config.imageUrlPrefix;
           if (sideRow._imgUrlCache && sideRow._imgUrlCache.prefix === currentPrefix && sideRow._imgUrlCache.name === sideRow.imgName) {
             return sideRow._imgUrlCache.url;
@@ -2729,8 +2873,6 @@
           drag.previewEnd = trimmed.end;
         }
 
-        // Plain (non-reactive) bookkeeping for boundary drag RAF — avoids
-        // triggering Vue re-renders on every mousemove during drag.
         let _reasonDragRaf = 0;
         let _pendingReasonDragPoint = null;
 
@@ -2815,6 +2957,7 @@
             state.pairs = parseRowsToPairs(rows, config);
             _rebuildPairMap();
             state.rowsLoaded = rows.length;
+            state.loadGeneration++;  // FIX 1
             clearPhraseSelection();
             clearTextSelection();
             closeContextMenu();
@@ -2838,6 +2981,7 @@
             state.pairs = parseRowsToPairs(rows, config);
             _rebuildPairMap();
             state.rowsLoaded = rows.length;
+            state.loadGeneration++;  // FIX 1
             clearPhraseSelection();
             clearTextSelection();
             closeContextMenu();
@@ -2949,6 +3093,10 @@
             _tooltipEl.parentNode.removeChild(_tooltipEl);
             _tooltipEl = null;
           }
+          if (_infoTipEl && _infoTipEl.parentNode) {
+            _infoTipEl.parentNode.removeChild(_infoTipEl);
+            _infoTipEl = null;
+          }
         });
 
         return {
@@ -3015,6 +3163,8 @@
           setContextMenuTopic,
           applyContextMenuChoice,
           onAppMouseDown,
+          showInfoTip,
+          hideInfoTip,
         };
       },
       template: `
@@ -3090,8 +3240,8 @@
             <div v-if="filters.showPhrases">Phrases</div>
           </div>
 
-          <div v-for="item in filteredPairs" :key="item.pair.pairId"
-               v-memo="[item.pair.more._phraseVersion, item.pair.less._phraseVersion, item.showMore, item.showLess, filters.showPhrases, state.selectedChip && state.selectedChip.pairId === item.pair.pairId ? state.selectedChip.phraseId : '', state.reasonSelection && state.reasonSelection.pairId === item.pair.pairId ? state.reasonSelection.start : -1, state.reasonDrag && state.reasonDrag.pairId === item.pair.pairId ? state.reasonDrag.previewStart : -1, state.reasonDrag && state.reasonDrag.pairId === item.pair.pairId ? state.reasonDrag.previewEnd : -1, state.draggingChipId || '', state.editingChipId || '', state.selectedText && state.selectedText.pairId === item.pair.pairId ? state.selectedText.text : '', state.copiedPhraseKey]"
+          <div v-for="item in filteredPairs" :key="item.pair.pairId + '_' + state.loadGeneration"
+               v-memo="[item.pair.more._phraseVersion, item.pair.less._phraseVersion, item.showMore, item.showLess, filters.showPhrases, state.selectedChip && state.selectedChip.pairId === item.pair.pairId ? state.selectedChip.phraseId : '', state.reasonSelection && state.reasonSelection.pairId === item.pair.pairId ? state.reasonSelection.start : -1, state.reasonDrag && state.reasonDrag.pairId === item.pair.pairId ? state.reasonDrag.previewStart : -1, state.reasonDrag && state.reasonDrag.pairId === item.pair.pairId ? state.reasonDrag.previewEnd : -1, state.draggingChipId || '', state.editingChipId || '', state.selectedText && state.selectedText.pairId === item.pair.pairId ? state.selectedText.text : '', state.copiedPhraseKey, state.loadGeneration]"
                class="pair-card">
             <div class="pair-title">Pair row {{ item.pair.rowIndex + 2 }}</div>
 
@@ -3117,13 +3267,19 @@
                 <button class="btn icon-btn phrases-copy-btn" :class="{ copied: state.copiedPhraseKey === (item.pair.pairId + '__more') }" @click="copyPhraseJson(item.pair.pairId, 'more')" title="Copy phrase JSON">{{ state.copiedPhraseKey === (item.pair.pairId + '__more') ? "✓" : "⧉" }}</button>
                 <template v-for="(subMap, topic) in groupedForDisplay(item.pair.more)" :key="topic">
                   <div class="topic-block">
-                    <div class="topic-name">{{ topic }}</div>
+                    <div class="topic-name">
+                      <span>{{ topic }}</span>
+                      <span class="info-help-btn" @click.stop="showInfoTip(topic, null, $event)" title="View definition">?</span>
+                    </div>
                     <template v-for="(chips, subtopic) in subMap" :key="topic + '__' + subtopic">
                       <div class="subtopic-row"
                            :class="{ 'drop-hover': addAllowed(item.pair.pairId, 'more') }"
                            @dragover.prevent
                            @drop.prevent.stop="onDropToSubtopic(item.pair.pairId, 'more', topic, subtopic, $event)">
-                        <div class="subtopic-name">{{ subtopic }}:</div>
+                        <div class="subtopic-name">
+                          <span>{{ subtopic }}:</span>
+                          <span class="info-help-btn" @click.stop="showInfoTip(topic, subtopic, $event)" title="View definition">?</span>
+                        </div>
                         <div class="chips-wrap">
                           <div v-for="chip in chips"
                                :key="chip.id"
@@ -3198,13 +3354,19 @@
                 <button class="btn icon-btn phrases-copy-btn" :class="{ copied: state.copiedPhraseKey === (item.pair.pairId + '__less') }" @click="copyPhraseJson(item.pair.pairId, 'less')" title="Copy phrase JSON">{{ state.copiedPhraseKey === (item.pair.pairId + '__less') ? "✓" : "⧉" }}</button>
                 <template v-for="(subMap, topic) in groupedForDisplay(item.pair.less)" :key="topic">
                   <div class="topic-block">
-                    <div class="topic-name">{{ topic }}</div>
+                    <div class="topic-name">
+                      <span>{{ topic }}</span>
+                      <span class="info-help-btn" @click.stop="showInfoTip(topic, null, $event)" title="View definition">?</span>
+                    </div>
                     <template v-for="(chips, subtopic) in subMap" :key="topic + '__' + subtopic">
                       <div class="subtopic-row"
                            :class="{ 'drop-hover': addAllowed(item.pair.pairId, 'less') }"
                            @dragover.prevent
                            @drop.prevent.stop="onDropToSubtopic(item.pair.pairId, 'less', topic, subtopic, $event)">
-                        <div class="subtopic-name">{{ subtopic }}:</div>
+                        <div class="subtopic-name">
+                          <span>{{ subtopic }}:</span>
+                          <span class="info-help-btn" @click.stop="showInfoTip(topic, subtopic, $event)" title="View definition">?</span>
+                        </div>
                         <div class="chips-wrap">
                           <div v-for="chip in chips"
                                :key="chip.id"
@@ -3341,7 +3503,7 @@
               <div class="row" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <div>
                   <h3 style="margin:0 0 4px;">Topic &amp; Subtopic Guide</h3>
-                  <div class="hint">Definitions for the current topic system. The generic “Others” bucket is intentionally omitted here.</div>
+                  <div class="hint">Definitions for the current topic system. The generic "Others" bucket is intentionally omitted here.</div>
                 </div>
                 <button class="btn" @click="closeHelp">Close</button>
               </div>
