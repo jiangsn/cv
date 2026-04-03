@@ -860,6 +860,43 @@
       color: #e2e8f0;
     }
 
+    /* ── Search field with inline help button ─────────── */
+    .field-with-help {
+      position: relative;
+    }
+
+    .field-with-help input {
+      padding-right: 30px;
+    }
+
+    .field-help-btn {
+      position: absolute;
+      right: 6px;
+      bottom: 9.5px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #f1f5f9;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+      z-index: 1;
+    }
+
+    .field-help-btn:hover {
+      background: #e0e7ff;
+      color: #4f46e5;
+      border-color: #a5b4fc;
+    }
+
     /* ── Inline help tooltip button ───────────────────── */
     .info-help-btn {
       display: inline-flex;
@@ -924,6 +961,15 @@
 
     .info-tooltip .info-tt-examples strong {
       color: #a5b4fc;
+    }
+
+    .info-tooltip code {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11.5px;
+      color: #fde68a;
     }
 
     /* ── Hide-phrases 2-column layout ─────────────────── */
@@ -1794,23 +1840,262 @@
       return map;
     }
 
+    // ── Phrase filter expression parser ─────────────────────────────
+    // Grammar:  expr = orExpr
+    //           orExpr = andExpr ("|" andExpr)*
+    //           andExpr = atom+
+    //           atom = "!" atom | "(" expr ")" | quoted_token | token
+    // Spaces are AND.  "|" is OR (needs content on both sides).
+    // "!" negates the immediately following atom.
+    // "quoted" = exact match (word boundaries); special chars inside are literal.
+
+    // Returns AST node: { type: 'token'|'and'|'or'|'not', ... }  or null (empty)
+    // Cached: only re-parsed when the raw string changes.
+
+    let _filterCache = { raw: '', ast: null };
+
+    function parseFilterExpr(raw) {
+      const trimmed = String(raw || '').trim();
+      if (!trimmed) return null;
+      if (_filterCache.raw === trimmed) return _filterCache.ast;
+
+      let ast;
+      // Fast path 1: no special characters → single substring token
+      if (!/[|!() "]/.test(trimmed)) {
+        ast = { type: 'token', value: trimmed.toLowerCase(), exact: false };
+      }
+      // Fast path 2: no parentheses → split-based parse
+      else if (!/[()]/.test(trimmed)) {
+        ast = _parseSimple(trimmed);
+      }
+      // Full parse with parentheses
+      else {
+        ast = _parseFull(trimmed);
+      }
+      _filterCache = { raw: trimmed, ast };
+      return ast;
+    }
+
+    function _parseSimple(raw) {
+      // Tokenize first (handles quotes), then group by "|"
+      const toks = _tokenizeSimple(raw);
+      if (!toks.length) return null;
+      // Split token list by "|" separators
+      const groups = [[]];
+      for (const tok of toks) {
+        if (tok.type === 'sep' && tok.value === '|') {
+          groups.push([]);
+        } else {
+          groups[groups.length - 1].push(tok);
+        }
+      }
+      const orNodes = [];
+      for (const group of groups) {
+        const andNode = _buildAndFromTokens(group);
+        if (andNode) orNodes.push(andNode);
+      }
+      if (!orNodes.length) return null;
+      if (orNodes.length === 1) return orNodes[0];
+      return { type: 'or', children: orNodes };
+    }
+
+    function _tokenizeSimple(raw) {
+      // Returns array of { type:'word'|'quoted'|'neg'|'sep', value }
+      const out = [];
+      let i = 0;
+      while (i < raw.length) {
+        const ch = raw[i];
+        if (/\s/.test(ch)) { i++; continue; }
+        if (ch === '|') { out.push({ type: 'sep', value: '|' }); i++; continue; }
+        if (ch === '"') {
+          i++; // skip opening quote
+          let content = '';
+          while (i < raw.length && raw[i] !== '"') { content += raw[i]; i++; }
+          if (i < raw.length) i++; // skip closing quote
+          if (content) out.push({ type: 'quoted', value: content });
+          continue;
+        }
+        if (ch === '!' && i + 1 < raw.length && !/[\s|]/.test(raw[i + 1])) {
+          i++; // skip !
+          // Check if next is a quoted token
+          if (raw[i] === '"') {
+            i++; // skip opening quote
+            let content = '';
+            while (i < raw.length && raw[i] !== '"') { content += raw[i]; i++; }
+            if (i < raw.length) i++; // skip closing quote
+            if (content) out.push({ type: 'neg', value: content, exact: true });
+          } else {
+            let word = '';
+            while (i < raw.length && !/[\s|"!()]/.test(raw[i])) { word += raw[i]; i++; }
+            if (word) out.push({ type: 'neg', value: word, exact: false });
+          }
+          continue;
+        }
+        // Plain word
+        let word = '';
+        while (i < raw.length && !/[\s|"!()]/.test(raw[i])) { word += raw[i]; i++; }
+        if (word) out.push({ type: 'word', value: word });
+      }
+      return out;
+    }
+
+    function _buildAndFromTokens(toks) {
+      const nodes = [];
+      for (const tok of toks) {
+        if (tok.type === 'word') {
+          nodes.push({ type: 'token', value: tok.value.toLowerCase(), exact: false });
+        } else if (tok.type === 'quoted') {
+          nodes.push({ type: 'token', value: tok.value.toLowerCase(), exact: true });
+        } else if (tok.type === 'neg') {
+          nodes.push({ type: 'not', child: { type: 'token', value: tok.value.toLowerCase(), exact: !!tok.exact } });
+        }
+        // skip 'sep'
+      }
+      if (!nodes.length) return null;
+      if (nodes.length === 1) return nodes[0];
+      return { type: 'and', children: nodes };
+    }
+
+    // Full recursive-descent parser (supports parentheses)
+    function _parseFull(raw) {
+      const tokens = _tokenize(raw);
+      let pos = 0;
+
+      function peek() { return tokens[pos] || null; }
+      function consume() { return tokens[pos++]; }
+
+      function parseOr() {
+        const children = [parseAnd()];
+        while (peek()?.value === '|' && peek()?.type === 'sep') {
+          consume(); // eat "|"
+          const right = parseAnd();
+          if (right) children.push(right);
+        }
+        if (children.length === 1) return children[0];
+        return children.filter(Boolean).length ? { type: 'or', children: children.filter(Boolean) } : null;
+      }
+
+      function parseAnd() {
+        const children = [];
+        while (peek() && !(peek().type === 'sep' && peek().value === '|') && !(peek().type === 'sep' && peek().value === ')')) {
+          const node = parseAtom();
+          if (node) children.push(node);
+        }
+        if (!children.length) return null;
+        if (children.length === 1) return children[0];
+        return { type: 'and', children };
+      }
+
+      function parseAtom() {
+        const t = peek();
+        if (!t) return null;
+        if (t.type === 'sep' && t.value === '!') {
+          consume();
+          const child = parseAtom();
+          return child ? { type: 'not', child } : null;
+        }
+        if (t.type === 'sep' && t.value === '(') {
+          consume();
+          const inner = parseOr();
+          if (peek()?.type === 'sep' && peek()?.value === ')') consume();
+          return inner;
+        }
+        if (t.type === 'word') {
+          consume();
+          return { type: 'token', value: t.value.toLowerCase(), exact: false };
+        }
+        if (t.type === 'quoted') {
+          consume();
+          return { type: 'token', value: t.value.toLowerCase(), exact: true };
+        }
+        // Skip unexpected tokens
+        consume();
+        return null;
+      }
+
+      const result = parseOr();
+      return result;
+    }
+
+    function _tokenize(raw) {
+      // Returns array of { type:'word'|'quoted'|'sep', value }
+      const out = [];
+      let i = 0;
+      while (i < raw.length) {
+        const ch = raw[i];
+        if (/\s/.test(ch)) { i++; continue; }
+        if (ch === '(' || ch === ')' || ch === '|' || ch === '!') {
+          out.push({ type: 'sep', value: ch });
+          i++;
+          continue;
+        }
+        if (ch === '"') {
+          i++; // skip opening quote
+          let content = '';
+          while (i < raw.length && raw[i] !== '"') { content += raw[i]; i++; }
+          if (i < raw.length) i++; // skip closing quote
+          if (content) out.push({ type: 'quoted', value: content });
+          continue;
+        }
+        let word = '';
+        while (i < raw.length && !/[\s()|!"']/.test(raw[i])) {
+          word += raw[i];
+          i++;
+        }
+        if (word) out.push({ type: 'word', value: word });
+      }
+      return out;
+    }
+
+    // Word-boundary regex cache for exact match tokens
+    const _exactRegexCache = new Map();
+    function _getExactRegex(value) {
+      if (_exactRegexCache.has(value)) return _exactRegexCache.get(value);
+      // Match the value surrounded by word boundaries (or string start/end)
+      // Use \b for word boundary — works well for alphanumeric tokens
+      const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(?:^|\\b|(?<=\\n))${escaped}(?:\\b|$|(?=\\n))`, 'i');
+      _exactRegexCache.set(value, re);
+      return re;
+    }
+
+    // Evaluate AST against a concatenated string of phrases
+    function evalFilterExpr(ast, haystack) {
+      if (!ast) return true;
+      switch (ast.type) {
+        case 'token':
+          if (ast.exact) return _getExactRegex(ast.value).test(haystack);
+          return haystack.includes(ast.value);
+        case 'not': return !evalFilterExpr(ast.child, haystack);
+        case 'and': return ast.children.every(c => evalFilterExpr(c, haystack));
+        case 'or': return ast.children.some(c => evalFilterExpr(c, haystack));
+        default: return true;
+      }
+    }
+
     function sideMatchesFilters(side, filters) {
       if (filters.complex !== 'all' && side.side !== filters.complex) return false;
 
-      const phraseNeedle = filters.phrase.trim().toLowerCase();
       const hasTopicFilter = !!(filters.topic || filters.subtopic);
-      const hasPhraseFilter = !!phraseNeedle;
+      const filterAst = parseFilterExpr(filters.phrase);
+      const hasExprFilter = !!filterAst;
 
-      if (hasTopicFilter || hasPhraseFilter) {
-        const ok = side.phrases.some(p => {
-          if (filters.topic && p.topic !== filters.topic) return false;
-          if (filters.subtopic && p.subtopic !== filters.subtopic) return false;
-          if (hasPhraseFilter && !String(p.phrase).toLowerCase().includes(phraseNeedle)) return false;
-          return true;
-        });
-        if (!ok) return false;
-      }
-      return true;
+      if (!hasTopicFilter && !hasExprFilter) return true;
+
+      // Collect phrases matching topic/subtopic filter
+      const matchingPhrases = side.phrases.filter(p => {
+        if (filters.topic && p.topic !== filters.topic) return false;
+        if (filters.subtopic && p.subtopic !== filters.subtopic) return false;
+        return true;
+      });
+
+      if (hasTopicFilter && !matchingPhrases.length) return false;
+      if (!hasExprFilter) return true;
+
+      // Build haystack from matching phrases (or all if no topic filter)
+      const pool = hasTopicFilter ? matchingPhrases : side.phrases;
+      const haystack = pool.map(p => String(p.phrase).toLowerCase()).join('\n');
+      return evalFilterExpr(filterAst, haystack);
     }
 
     createApp({
@@ -1822,7 +2107,7 @@
         const state = reactive({
           loading: false,
           rowsLoaded: 0,
-          loadGeneration: 0,
+          loadGeneration: 0,   // FIX 1: generation counter to bust v-memo cache on reload
           pairs: [],
           status: '',
           statusType: 'info',
@@ -2282,7 +2567,7 @@
 
         // ── Inline info tooltip (FIX 3) ──────────────────────────────────
         let _infoTipEl = null;
-        let _infoTipTimer = 0;
+        let _infoTipAnchor = null; // the button element that opened the current tooltip
 
         function _ensureInfoTip() {
           if (_infoTipEl) return _infoTipEl;
@@ -2293,10 +2578,43 @@
           return _infoTipEl;
         }
 
+        function _positionInfoTip(anchorEl) {
+          const el = _infoTipEl;
+          if (!el || !anchorEl) return;
+          const btnRect = anchorEl.getBoundingClientRect();
+          requestAnimationFrame(() => {
+            const tipRect = el.getBoundingClientRect();
+            let top = btnRect.bottom + 6;
+            if (top + tipRect.height > window.innerHeight - 8) {
+              top = btnRect.top - tipRect.height - 6;
+            }
+            let left = btnRect.left + btnRect.width / 2 - tipRect.width / 2;
+            left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+            el.style.left = `${left}px`;
+            el.style.top = `${top}px`;
+          });
+        }
+
+        function _openInfoTipWithHtml(html, anchorEl) {
+          const el = _ensureInfoTip();
+          // Toggle: if clicking the same anchor that's already open, close it
+          if (el.style.display !== 'none' && _infoTipAnchor === anchorEl) {
+            hideInfoTip();
+            return;
+          }
+          el.innerHTML = html;
+          el.style.display = 'block';
+          _infoTipAnchor = anchorEl;
+          _positionInfoTip(anchorEl);
+          // Close on next outside click (but not the current click)
+          setTimeout(() => {
+            document.addEventListener('mousedown', _infoTipOutsideClick, { once: true });
+          }, 0);
+        }
+
         function showInfoTip(topic, subtopic, e) {
           e.stopPropagation();
           e.preventDefault();
-          const el = _ensureInfoTip();
           const topicData = HELP_LOOKUP[topic];
           let html = '';
           if (subtopic && topicData?.subtopics?.[subtopic]) {
@@ -2310,28 +2628,23 @@
           } else {
             html = `<div class="info-tt-title">${escapeHtml(topic)}</div><p class="info-tt-def">No definition available.</p>`;
           }
-          el.innerHTML = html;
-          el.style.display = 'block';
-          // Position near the button
-          const btnRect = e.currentTarget.getBoundingClientRect();
-          requestAnimationFrame(() => {
-            const tipRect = el.getBoundingClientRect();
-            let top = btnRect.bottom + 6;
-            if (top + tipRect.height > window.innerHeight - 8) {
-              top = btnRect.top - tipRect.height - 6;
-            }
-            let left = btnRect.left + btnRect.width / 2 - tipRect.width / 2;
-            left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
-            el.style.left = `${left}px`;
-            el.style.top = `${top}px`;
-          });
-          // Auto-hide after a delay, or on next click
-          clearTimeout(_infoTipTimer);
-          _infoTipTimer = setTimeout(hideInfoTip, 15000);
-          // Close on next outside click
-          setTimeout(() => {
-            document.addEventListener('mousedown', _infoTipOutsideClick, { once: true });
-          }, 0);
+          _openInfoTipWithHtml(html, e.currentTarget);
+        }
+
+        function showSearchHelpTip(e) {
+          e.stopPropagation();
+          e.preventDefault();
+          const html = `<div class="info-tt-title">Search Syntax</div>
+<p class="info-tt-def" style="margin-bottom:6px;">Filter pairs by phrase text. Expressions are matched against all phrases in a row (scoped by Topic/Subtopic filters if set).</p>
+<div class="info-tt-examples">
+<strong>space</strong> = AND &nbsp; <code>simple text</code> → both must appear<br>
+<strong>|</strong> = OR &nbsp; <code>color | shape</code> → either suffices<br>
+<strong>!</strong> = NOT &nbsp; <code>!overlap color</code> → has "color" but not "overlap"<br>
+<strong>"…"</strong> = exact &nbsp; <code>"simple"</code> → won't match "simpler"<br>
+<strong>( )</strong> = grouping &nbsp; <code>(red | blue) !dark</code><br>
+<span style="color:#64748b;">Precedence: ! &gt; AND &gt; OR. Parentheses override.<br>Quotes treat <code style="color:#94a3b8;">! | ( )</code> inside as literal text.</span>
+</div>`;
+          _openInfoTipWithHtml(html, e.currentTarget);
         }
 
         function _infoTipOutsideClick(e) {
@@ -2340,11 +2653,16 @@
             document.addEventListener('mousedown', _infoTipOutsideClick, { once: true });
             return;
           }
+          // Click on the same anchor button that opened it — let toggle handle it
+          if (_infoTipAnchor && _infoTipAnchor.contains(e.target)) {
+            // Don't close here; the click handler on the button will toggle
+            return;
+          }
           hideInfoTip();
         }
 
         function hideInfoTip() {
-          clearTimeout(_infoTipTimer);
+          _infoTipAnchor = null;
           if (_infoTipEl) _infoTipEl.style.display = 'none';
         }
 
@@ -3166,6 +3484,7 @@
           onAppMouseDown,
           showInfoTip,
           hideInfoTip,
+          showSearchHelpTip,
         };
       },
       template: `
@@ -3215,9 +3534,10 @@
                   <option v-for="sub in filterSubtopics" :key="sub" :value="sub">{{ sub }}</option>
                 </select>
               </div>
-              <div class="field">
-                <label>Phrase contains</label>
-                <input v-model="filters.phrase" placeholder="search phrase text" />
+              <div class="field field-with-help">
+                <label>Phrase Search</label>
+                <input v-model="filters.phrase" placeholder="e.g. color | !simple text" />
+                <span class="field-help-btn" @click.stop="showSearchHelpTip($event)" title="Search syntax help">?</span>
               </div>
               <div class="toggle-field">
                 <label>Phrases</label>
