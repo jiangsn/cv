@@ -1797,16 +1797,17 @@
     function sideMatchesFilters(side, filters) {
       if (filters.complex !== 'all' && side.side !== filters.complex) return false;
 
-      const matchesTopicAndSubtopic = side.phrases.some(p => {
-        if (filters.topic && p.topic !== filters.topic) return false;
-        if (filters.subtopic && p.subtopic !== filters.subtopic) return false;
-        return true;
-      });
-      if ((filters.topic || filters.subtopic) && !matchesTopicAndSubtopic) return false;
-
       const phraseNeedle = filters.phrase.trim().toLowerCase();
-      if (phraseNeedle) {
-        const ok = side.phrases.some(p => String(p.phrase).toLowerCase().includes(phraseNeedle));
+      const hasTopicFilter = !!(filters.topic || filters.subtopic);
+      const hasPhraseFilter = !!phraseNeedle;
+
+      if (hasTopicFilter || hasPhraseFilter) {
+        const ok = side.phrases.some(p => {
+          if (filters.topic && p.topic !== filters.topic) return false;
+          if (filters.subtopic && p.subtopic !== filters.subtopic) return false;
+          if (hasPhraseFilter && !String(p.phrase).toLowerCase().includes(phraseNeedle)) return false;
+          return true;
+        });
         if (!ok) return false;
       }
       return true;
