@@ -4626,30 +4626,30 @@
 
               <div class="toolbar-grid" style="margin-top: 10px; grid-template-columns: repeat(3, minmax(0,1fr));">
                 <div class="field">
-                  <label>More ImgName column</label>
+                  <label>More ImgName column (name must be unique)</label>
                   <input v-model="config.moreImgCol" />
                 </div>
                 <div class="field">
-                  <label>More Reason column</label>
+                  <label>More Reason column (name must be unique)</label>
                   <input v-model="config.moreReasonCol" />
                 </div>
                 <div class="field">
-                  <label>More Phrases column</label>
+                  <label>More Phrases column (name must be unique)</label>
                   <input v-model="config.morePhrasesCol" />
                 </div>
               </div>
 
               <div class="toolbar-grid" style="margin-top: 10px; grid-template-columns: repeat(3, minmax(0,1fr));">
                 <div class="field">
-                  <label>Less ImgName column</label>
+                  <label>Less ImgName column (name must be unique)</label>
                   <input v-model="config.lessImgCol" />
                 </div>
                 <div class="field">
-                  <label>Less Reason column</label>
+                  <label>Less Reason column (name must be unique)</label>
                   <input v-model="config.lessReasonCol" />
                 </div>
                 <div class="field">
-                  <label>Less Phrases column</label>
+                  <label>Less Phrases column (name must be unique)</label>
                   <input v-model="config.lessPhrasesCol" />
                 </div>
               </div>
@@ -4736,7 +4736,9 @@
                   • {{ config.morePhrasesCol }}<br>
                   • {{ config.lessPhrasesCol }}
                 </div>
-                <div style="margin-top: 8px;">If something goes wrong, use <strong>Google Sheet's version history</strong> (File → Version history → See version history) to roll back.</div>
+                <div style="margin-top: 10px;">If the Google Sheet has been edited, sorted, or had rows/columns inserted or deleted <em>after</em> you loaded the data, saving will overwrite those changes and may cause <strong>row and column misalignment</strong>. Please verify the sheet has not been modified before saving.</div>
+                <div style="margin-top: 10px;">If something goes wrong, use <strong>Google Sheet's version history</strong> (File → Version history → See version history) to roll back.</div>
+                <div style="margin-top: 10px;"><a :href="'https://docs.google.com/spreadsheets/d/' + config.spreadsheetId + '/edit#gid=' + config.sheetId" target="_blank" rel="noopener" style="color:#2563eb;font-weight:600;">Open Google Sheet to verify ↗</a></div>
               </div>
               <div class="footer-actions">
                 <button class="btn" @click="cancelSaveConfirm">Cancel</button>
