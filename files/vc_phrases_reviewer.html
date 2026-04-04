@@ -2380,16 +2380,18 @@
         function _scrollToChip(pairId, side, phraseId) {
           nextTick(() => {
             let target = null;
-            if (filters.showPhrases) {
+
+            // scroll to phrase span in reason box first
+            const reasonBox = getReasonBoxEl(pairId, side);
+            if (reasonBox) target = reasonBox.querySelector(`.reason-phrase[data-phrase-id="${CSS.escape(phraseId)}"]`);
+
+            // fall back to chip if no reason phrase found (can happen if the chip is falsey-extracted or manually modified)
+            if (!target) {
               const sideKey = `${pairId}__${side}`;
               const sideEl = document.querySelector(`[data-side-key="${CSS.escape(sideKey)}"]`);
               if (sideEl) target = sideEl.querySelector(`.chip[data-phrase-id="${CSS.escape(phraseId)}"]`);
             }
-            if (!target) {
-              // Fallback: find the phrase span in the reason box
-              const reasonBox = getReasonBoxEl(pairId, side);
-              if (reasonBox) target = reasonBox.querySelector(`.reason-phrase[data-phrase-id="${CSS.escape(phraseId)}"]`);
-            }
+
             if (target) {
               target.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
