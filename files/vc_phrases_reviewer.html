@@ -897,6 +897,33 @@
       border-color: #a5b4fc;
     }
 
+    .field-clear-btn {
+      position: absolute;
+      right: 32px;
+      bottom: 7px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 15px;
+      font-weight: 400;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.12s ease, color 0.12s ease;
+      z-index: 1;
+    }
+
+    .field-clear-btn:hover {
+      background: #fee2e2;
+      color: #dc2626;
+    }
+
     /* ── Inline help tooltip button ───────────────────── */
     .info-help-btn {
       display: inline-flex;
@@ -3543,7 +3570,8 @@
               </div>
               <div class="field field-with-help">
                 <label>Phrase Search</label>
-                <input v-model="filters.phrase" placeholder="e.g. color | !simple text" />
+                <input v-model="filters.phrase" placeholder="e.g. color | !simple text" :style="{ paddingRight: filters.phrase ? '54px' : '30px' }" />
+                <span v-if="filters.phrase" class="field-clear-btn" @click.stop="filters.phrase = ''" title="Clear">×</span>
                 <span class="field-help-btn" @click.stop="showSearchHelpTip($event)" title="Search syntax help">?</span>
               </div>
               <div class="toggle-field">
