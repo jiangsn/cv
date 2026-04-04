@@ -7,6 +7,7 @@
   <title>Phrase Reviewer</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     :root {
       --bg: #f6f8fb;
@@ -804,6 +805,63 @@
       margin-left: 4px;
     }
 
+    /* ── Save confirmation dialog ──────────────────────── */
+    .save-confirm-warn {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 10px 0;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #9a3412;
+    }
+
+    .save-confirm-warn strong {
+      color: #c2410c;
+    }
+
+    .save-confirm-cols {
+      margin-top: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      color: #78350f;
+    }
+
+    .auth-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 999px;
+    }
+
+    .auth-status.authed {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .auth-status.not-authed {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .auth-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+    }
+
+    .auth-dot.on {
+      background: #059669;
+    }
+
+    .auth-dot.off {
+      background: #dc2626;
+    }
+
     /* ── Toggle switch ─────────────────────────────────── */
     .toggle-field {
       display: flex;
@@ -1315,6 +1373,7 @@
       lessReasonCol: "LessComplexReason",
       morePhrasesCol: "MoreComplexKeyPhrasesSubTopics",
       lessPhrasesCol: "LessComplexKeyPhrasesSubTopics",
+      oauthClientId: "631741966283-d138baoarvob9mlecoc1n6vk4rr9iqkd.apps.googleusercontent.com",
     };
 
     const uid = (() => {
@@ -1485,7 +1544,7 @@
         return label || id || `Column${idx + 1}`;
       });
 
-      return table.rows.map((row) => {
+      const rows = table.rows.map((row) => {
         const out = {};
         const cells = Array.isArray(row && row.c) ? row.c : [];
         headers.forEach((header, idx) => {
@@ -1493,6 +1552,7 @@
         });
         return out;
       });
+      return { rows, headers };
     }
 
     function loadGoogleSheetJsonp(cfg) {
@@ -2294,6 +2354,13 @@
           editingChipId: null,
           lastScrollY: 0,
           _scrollRaf: 0,
+          // OAuth & Save
+          oauthToken: null,
+          oauthUser: '',
+          saving: false,
+          saveConfirmOpen: false,
+          sheetHeaders: [],   // column headers from loaded sheet
+          sheetName: '',      // resolved sheet tab name
         });
 
         function setStatus(msg, type = 'info') {
@@ -3820,7 +3887,9 @@
           }
           state.loading = true;
           try {
-            const rows = await loadGoogleSheetJsonp(config);
+            const result = await loadGoogleSheetJsonp(config);
+            const rows = result.rows;
+            state.sheetHeaders = result.headers;
             state.pairs = parseRowsToPairs(rows, config);
             _rebuildPairMap();
             state.rowsLoaded = rows.length;
@@ -3830,6 +3899,8 @@
             closeContextMenu();
             _undoStack.length = 0;
             _redoStack.length = 0;
+            // Resolve the sheet tab name for Sheets API (need it for A1 notation)
+            resolveSheetName();
             setStatus(`Loaded ${rows.length} rows from Google Sheets.`, 'good');
           } catch (err) {
             console.error(err);
@@ -3837,6 +3908,26 @@
           } finally {
             state.loading = false;
           }
+        }
+
+        // Resolve the actual sheet tab name via the Sheets API metadata endpoint
+        // Uses the gviz tqx=out:json trick — the sheet name is already known from the response
+        // Fallback: use the sheetId to fetch metadata from Sheets API (no auth needed for public sheets)
+        async function resolveSheetName() {
+          try {
+            const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(config.spreadsheetId.trim())}?fields=sheets.properties&key=`;
+            // Try without API key first — works for public sheets via the gviz approach
+            // We can also just fetch the spreadsheet metadata
+            const resp = await fetch(`https://docs.google.com/spreadsheets/d/${encodeURIComponent(config.spreadsheetId.trim())}/gviz/tq?gid=${encodeURIComponent(config.sheetId.trim())}&tqx=out:csv&tq=limit%200`);
+            if (resp.ok) {
+              // The CSV header line has the column names but we mainly want to confirm it works.
+              // For the sheet name, we need another approach: use the edit URL.
+              // Actually, we'll just use the gid-based range in Sheets API, which accepts gid.
+              // Sheets API v4 doesn't directly accept gid in ranges, so let's get metadata.
+            }
+          } catch { /* ignore */ }
+          // We'll resolve the sheet name at save time using the OAuth token
+          state.sheetName = '';
         }
 
         function exportRows() {
@@ -3889,6 +3980,209 @@
             setStatus('Clipboard copy failed. Your browser may block clipboard access.', 'warn');
           }
         }
+
+        // ── Google OAuth2 + Sheets API write-back ────────────────────
+        let _tokenClient = null;
+        let _tokenExpiresAt = 0;
+
+        function isOAuthReady() {
+          return !!state.oauthToken && Date.now() < _tokenExpiresAt;
+        }
+
+        function initTokenClient() {
+          if (_tokenClient) return;
+          const clientId = String(config.oauthClientId || '').trim();
+          if (!clientId) return;
+          if (typeof google === 'undefined' || !google.accounts?.oauth2) {
+            console.warn('Google Identity Services not loaded yet.');
+            return;
+          }
+          _tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: clientId,
+            scope: 'https://www.googleapis.com/auth/spreadsheets',
+            callback: (tokenResponse) => {
+              if (tokenResponse.error) {
+                setStatus(`OAuth error: ${tokenResponse.error}`, 'warn');
+                return;
+              }
+              state.oauthToken = tokenResponse.access_token;
+              _tokenExpiresAt = Date.now() + (tokenResponse.expires_in || 3600) * 1000 - 60000;
+              // Get user info
+              fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+              }).then(r => r.json()).then(u => {
+                state.oauthUser = u.email || u.name || 'Authorized';
+              }).catch(() => { state.oauthUser = 'Authorized'; });
+              setStatus('Google account authorized.', 'good');
+            },
+          });
+        }
+
+        function requestOAuth() {
+          const clientId = String(config.oauthClientId || '').trim();
+          if (!clientId) {
+            setStatus('Please set OAuth Client ID in Configuration first.', 'warn');
+            return;
+          }
+          initTokenClient();
+          if (!_tokenClient) {
+            setStatus('Google Identity Services library not loaded. Please refresh and try again.', 'warn');
+            return;
+          }
+          if (isOAuthReady()) {
+            setStatus('Already authorized.', 'good');
+            return;
+          }
+          _tokenClient.requestAccessToken();
+        }
+
+        function revokeOAuth() {
+          if (state.oauthToken) {
+            google.accounts.oauth2.revoke(state.oauthToken);
+          }
+          state.oauthToken = null;
+          state.oauthUser = '';
+          _tokenExpiresAt = 0;
+          _tokenClient = null;
+          setStatus('Google account signed out.', 'info');
+        }
+
+        // Get sheet tab name from gid using Sheets API metadata
+        async function _getSheetTabName(token, spreadsheetId, gid) {
+          const numGid = Number(gid);
+          const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=sheets.properties`;
+          const resp = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!resp.ok) throw new Error(`Failed to get sheet metadata: ${resp.status} ${resp.statusText}`);
+          const data = await resp.json();
+          const sheets = data.sheets || [];
+          const sheet = sheets.find(s => s.properties?.sheetId === numGid);
+          if (!sheet) throw new Error(`No sheet found with gid=${gid}. Available gids: ${sheets.map(s => s.properties?.sheetId).join(', ')}`);
+          return sheet.properties.title;
+        }
+
+        // Convert column header name → 0-based index in loaded headers
+        function _colIndex(headerName) {
+          return state.sheetHeaders.indexOf(headerName);
+        }
+
+        // Convert 0-based column index → A1 column letter (A, B, ..., Z, AA, AB, ...)
+        function _colLetter(idx) {
+          let s = '';
+          let n = idx;
+          while (n >= 0) {
+            s = String.fromCharCode(65 + (n % 26)) + s;
+            n = Math.floor(n / 26) - 1;
+          }
+          return s;
+        }
+
+        function openSaveConfirm() {
+          if (!state.pairs.length) {
+            setStatus('No data loaded to save.', 'warn');
+            return;
+          }
+          if (!isOAuthReady()) {
+            requestOAuth();
+            // After auth, user needs to click save again
+            return;
+          }
+          state.saveConfirmOpen = true;
+        }
+
+        function cancelSaveConfirm() {
+          state.saveConfirmOpen = false;
+        }
+
+        async function confirmSaveToSheet() {
+          state.saveConfirmOpen = false;
+          if (!isOAuthReady()) {
+            setStatus('OAuth token expired. Please authorize again.', 'warn');
+            requestOAuth();
+            return;
+          }
+
+          const spreadsheetId = String(config.spreadsheetId || '').trim();
+          const gid = String(config.sheetId || '').trim();
+          const moreCol = config.morePhrasesCol;
+          const lessCol = config.lessPhrasesCol;
+          const moreIdx = _colIndex(moreCol);
+          const lessIdx = _colIndex(lessCol);
+
+          if (moreIdx === -1 || lessIdx === -1) {
+            setStatus(`Column "${moreCol}" or "${lessCol}" not found in loaded headers. Cannot save.`, 'warn');
+            return;
+          }
+
+          state.saving = true;
+          setStatus('Saving to Google Sheet…', 'info');
+
+          try {
+            // Resolve sheet tab name
+            let tabName = state.sheetName;
+            if (!tabName) {
+              tabName = await _getSheetTabName(state.oauthToken, spreadsheetId, gid);
+              state.sheetName = tabName;
+            }
+
+            const escapedTab = tabName.includes("'") ? `'${tabName.replace(/'/g, "''")}'` : tabName.includes(' ') || /[^A-Za-z0-9_]/.test(tabName) ? `'${tabName}'` : tabName;
+
+            // Build value arrays for each column
+            // Rows start at row 2 (row 1 is header) in the sheet
+            const moreColLetter = _colLetter(moreIdx);
+            const lessColLetter = _colLetter(lessIdx);
+            const numRows = state.pairs.length;
+
+            const moreValues = state.pairs.map(pair => [serializePhraseTree(pair.more.phrases)]);
+            const lessValues = state.pairs.map(pair => [serializePhraseTree(pair.less.phrases)]);
+
+            // Use batchUpdate (valueInputOption=RAW) to write both columns
+            const body = {
+              valueInputOption: 'RAW',
+              data: [
+                {
+                  range: `${escapedTab}!${moreColLetter}2:${moreColLetter}${numRows + 1}`,
+                  values: moreValues,
+                },
+                {
+                  range: `${escapedTab}!${lessColLetter}2:${lessColLetter}${numRows + 1}`,
+                  values: lessValues,
+                },
+              ],
+            };
+
+            const apiUrl = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values:batchUpdate`;
+            const resp = await fetch(apiUrl, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${state.oauthToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(body),
+            });
+
+            if (!resp.ok) {
+              const errData = await resp.json().catch(() => ({}));
+              const errMsg = errData?.error?.message || `${resp.status} ${resp.statusText}`;
+              throw new Error(errMsg);
+            }
+
+            const result = await resp.json();
+            const updated = result.totalUpdatedCells || 0;
+            setStatus(`Saved ${updated} cells to Google Sheet (columns ${moreColLetter} & ${lessColLetter}).`, 'good');
+          } catch (err) {
+            console.error(err);
+            setStatus(`Failed to save: ${err.message || err}`, 'warn');
+          } finally {
+            state.saving = false;
+          }
+        }
+
+        watch(() => config.spreadsheetId + '__' + config.sheetId, () => {
+          state.sheetName = '';
+          state.sheetHeaders = [];
+        });
 
         watch(() => filters.topic, (val, oldVal) => {
           if (val && !filterTopics.value.includes(val)) {
@@ -4019,6 +4313,12 @@
           searchDisplayIndex,
           navigateSearch,
           onSearchKeydown,
+          isOAuthReady,
+          requestOAuth,
+          revokeOAuth,
+          openSaveConfirm,
+          cancelSaveConfirm,
+          confirmSaveToSheet,
         };
       },
       template: `
@@ -4032,6 +4332,7 @@
                 </div>
                 <div class="row">
                   <button class="btn primary" @click="loadFromUrl" :disabled="state.loading">{{ state.loading ? 'Loading...' : 'Load Google Sheet' }}</button>
+                  <button class="btn primary" style="background:#059669;border-color:#059669;" @click="openSaveConfirm" :disabled="!state.pairs.length || state.saving">{{ state.saving ? 'Saving...' : 'Save to Sheet' }}</button>
                   <button class="btn" @click="downloadCsv" :disabled="!state.pairs.length">Export CSV</button>
                   <button class="btn" @click="copyCsvToClipboard" :disabled="!state.pairs.length">Copy for Sheet</button>
                   <button class="btn icon-btn" @click="openConfig" title="Configuration">⚙️</button>
@@ -4039,7 +4340,7 @@
               </div>
 
               <div v-if="state.status" class="status" :class="state.statusType" style="margin-top:10px;">{{ state.status }}</div>
-              <div class="hint" style="margin-top: 8px;">Loaded rows: {{ state.rowsLoaded }} · Visible pair cards: {{ filteredPairs.length }}</div>
+              <div class="hint" style="margin-top: 8px;">Loaded rows: {{ state.rowsLoaded }} · Visible pair cards: {{ filteredPairs.length }}<template v-if="state.oauthUser"> · <span :class="isOAuthReady() ? 'auth-status authed' : 'auth-status not-authed'" style="font-size:11px;padding:2px 8px;"><span :class="isOAuthReady() ? 'auth-dot on' : 'auth-dot off'"></span>{{ state.oauthUser }}</span></template></div>
             </div>
           </div>
 
@@ -4423,6 +4724,23 @@
               <div class="footer-actions">
                 <button class="btn" @click="cancelAddDialog">Cancel</button>
                 <button class="btn primary" @click="confirmAddDialog">Add</button>
+              </div>
+            </div>
+          </div>
+          <div v-if="state.saveConfirmOpen" class="modal-mask" @click.self="cancelSaveConfirm">
+            <div class="modal">
+              <h3>Save to Google Sheet</h3>
+              <div class="save-confirm-warn">
+                <strong>Warning:</strong> This will overwrite the following two columns in your Google Sheet for all {{ state.pairs.length }} rows. This operation cannot be undone from this tool.
+                <div class="save-confirm-cols">
+                  • {{ config.morePhrasesCol }}<br>
+                  • {{ config.lessPhrasesCol }}
+                </div>
+                <div style="margin-top: 8px;">If something goes wrong, use <strong>Google Sheet's version history</strong> (File → Version history → See version history) to roll back.</div>
+              </div>
+              <div class="footer-actions">
+                <button class="btn" @click="cancelSaveConfirm">Cancel</button>
+                <button class="btn primary" style="background:#059669;border-color:#059669;" @click="confirmSaveToSheet">Confirm Save</button>
               </div>
             </div>
           </div>
