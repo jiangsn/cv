@@ -763,6 +763,47 @@
       line-height: 1.45;
     }
 
+    /* ── Undo/Redo toast ──────────────────────────────── */
+    .undo-toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      z-index: 200;
+      background: #1e293b;
+      color: #f1f5f9;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.4;
+      border-radius: 12px;
+      padding: 10px 18px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.22s ease, transform 0.22s ease;
+      max-width: min(480px, calc(100vw - 32px));
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .undo-toast.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .undo-toast .toast-action {
+      color: #93c5fd;
+      font-weight: 700;
+    }
+
+    .undo-toast .toast-detail {
+      color: #94a3b8;
+      font-weight: 400;
+      margin-left: 4px;
+    }
+
     /* ── Toggle switch ─────────────────────────────────── */
     .toggle-field {
       display: flex;
@@ -1280,6 +1321,51 @@
       let n = 1;
       return () => `p_${n++}`;
     })();
+
+    // ── Undo / Redo history system ─────────────────────────────────
+    const UNDO_MAX = 200;
+    const _undoStack = [];
+    const _redoStack = [];
+
+    // Each action: { type, description, undo(), redo(), pairId, side, phraseId }
+    function pushUndo(action) {
+      _undoStack.push(action);
+      if (_undoStack.length > UNDO_MAX) _undoStack.shift();
+      _redoStack.length = 0; // clear redo on new action
+    }
+
+    function canUndo() { return _undoStack.length > 0; }
+    function canRedo() { return _redoStack.length > 0; }
+
+    // Toast management (non-reactive, pure DOM)
+    let _toastEl = null;
+    let _toastTimer = 0;
+
+    function _ensureToast() {
+      if (_toastEl) return _toastEl;
+      _toastEl = document.createElement('div');
+      _toastEl.className = 'undo-toast';
+      document.body.appendChild(_toastEl);
+      return _toastEl;
+    }
+
+    function showUndoToast(actionLabel, detail) {
+      const el = _ensureToast();
+      el.innerHTML = `<span class="toast-action">${escapeHtml(actionLabel)}</span><span class="toast-detail">${escapeHtml(detail)}</span>`;
+      // Force reflow to restart transition
+      el.classList.remove('visible');
+      void el.offsetWidth;
+      el.classList.add('visible');
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => {
+        el.classList.remove('visible');
+      }, 5000);
+    }
+
+    function _truncate(s, max = 30) {
+      const t = String(s || '');
+      return t.length > max ? t.slice(0, max - 1) + '…' : t;
+    }
 
     function escapeHtml(s) {
       return String(s)
@@ -2526,6 +2612,8 @@
           if (!sideRow) return false;
           const idx = sideRow.phrases.findIndex(p => p.id === phraseId);
           if (idx === -1) return false;
+          const removed = { ...sideRow.phrases[idx] };
+          const removedIndex = idx;
           sideRow.phrases.splice(idx, 1);
           bumpSidePhraseVersion(sideRow);
           if (state.selectedChip && state.selectedChip.pairId === pairId && state.selectedChip.side === side && state.selectedChip.phraseId === phraseId) {
@@ -2535,12 +2623,81 @@
           const hKey = `${pairId}__${side}`;
           if (_hoverMap.get(hKey) === phraseId) _hoverMap.delete(hKey);
           if (setMessage) setStatus('Phrase deleted.', 'good');
+          // Record undo
+          pushUndo({
+            type: 'delete',
+            description: `Deleted "${_truncate(removed.phrase)}"`,
+            focusPairId: pairId,
+            focusSide: side,
+            focusPhraseId: removed.id,
+            undo() {
+              const sr = getSide(pairId, side);
+              if (!sr) return;
+              const restored = { ...removed, editing: false, selected: false };
+              sr.phrases.splice(Math.min(removedIndex, sr.phrases.length), 0, restored);
+              bumpSidePhraseVersion(sr);
+            },
+            redo() {
+              removePhraseById_noUndo(pairId, side, removed.id);
+            },
+            redoFocusPairId: null,
+            redoFocusSide: null,
+            redoFocusPhraseId: null,
+          });
+          return true;
+        }
+
+        // Internal version that doesn't push to undo stack (used for redo)
+        function removePhraseById_noUndo(pairId, side, phraseId) {
+          const sideRow = getSide(pairId, side);
+          if (!sideRow) return false;
+          const idx = sideRow.phrases.findIndex(p => p.id === phraseId);
+          if (idx === -1) return false;
+          sideRow.phrases.splice(idx, 1);
+          bumpSidePhraseVersion(sideRow);
+          if (state.selectedChip && state.selectedChip.pairId === pairId && state.selectedChip.side === side && state.selectedChip.phraseId === phraseId) {
+            clearPhraseSelection();
+          }
+          const hKey = `${pairId}__${side}`;
+          if (_hoverMap.get(hKey) === phraseId) _hoverMap.delete(hKey);
           return true;
         }
 
         function deleteSelectedPhrase() {
           if (!state.selectedChip) return;
           removePhraseById(state.selectedChip.pairId, state.selectedChip.side, state.selectedChip.phraseId, true);
+        }
+
+        // ── Undo / Redo execution ──────────────────────────────────
+        function _focusPhrase(pairId, side, phraseId) {
+          nextTick(() => {
+            _scrollToChip(pairId, side, phraseId);
+            selectPhrase(pairId, side, phraseId, null);
+          });
+        }
+
+        function performUndo() {
+          if (!canUndo()) return;
+          const action = _undoStack.pop();
+          _redoStack.push(action);
+          action.undo();
+          showUndoToast('Undo:', action.description);
+          if (action.focusPairId && action.focusSide && action.focusPhraseId) {
+            _focusPhrase(action.focusPairId, action.focusSide, action.focusPhraseId);
+          }
+        }
+
+        function performRedo() {
+          if (!canRedo()) return;
+          const action = _redoStack.pop();
+          _undoStack.push(action);
+          action.redo();
+          showUndoToast('Redo:', action.description);
+          if (action.redoFocusPairId && action.redoFocusSide && action.redoFocusPhraseId) {
+            _focusPhrase(action.redoFocusPairId, action.redoFocusSide, action.redoFocusPhraseId);
+          } else if (action.focusPairId && action.focusSide && action.focusPhraseId) {
+            _focusPhrase(action.focusPairId, action.focusSide, action.focusPhraseId);
+          }
         }
 
         function handleGlobalKeydown(e) {
@@ -2551,6 +2708,18 @@
               closeContextMenu();
               return;
             }
+          }
+          // Undo/Redo: Ctrl+Z / Ctrl+Shift+Z (or Cmd on Mac)
+          if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.altKey) {
+            e.preventDefault();
+            if (e.shiftKey) performRedo();
+            else performUndo();
+            return;
+          }
+          if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y') && !e.altKey && !e.shiftKey) {
+            e.preventDefault();
+            performRedo();
+            return;
           }
           if (isTyping) return;
           if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedChip) {
@@ -2590,15 +2759,41 @@
               return;
             }
             if (next !== phrase.phrase) {
+              const oldPhrase = phrase.phrase;
               const existing = findPhraseByText(sideRow, next, phrase.id);
               if (existing) {
                 if (existing.topic === phrase.topic && existing.subtopic === phrase.subtopic) {
+                  // Merge: remove current, keep existing
+                  const removedSnapshot = { ...phrase, editing: false, selected: false };
+                  const removedIdx = sideRow.phrases.findIndex(p => p.id === phrase.id);
                   phrase.editing = false;
                   state.editingChipId = null;
                   delete phrase._draft;
-                  removePhraseById(pairId, side, phrase.id, false);
+                  // Use noUndo version since we push a custom undo action
+                  removePhraseById_noUndo(pairId, side, phrase.id);
                   selectPhrase(pairId, side, existing.id, null);
                   setStatus('Merged with the existing phrase.', 'good');
+                  pushUndo({
+                    type: 'edit-merge',
+                    description: `Merged "${_truncate(oldPhrase)}" → "${_truncate(next)}"`,
+                    focusPairId: pairId,
+                    focusSide: side,
+                    focusPhraseId: removedSnapshot.id,
+                    undo() {
+                      const sr = getSide(pairId, side);
+                      if (!sr) return;
+                      const restored = { ...removedSnapshot };
+                      delete restored._draft;
+                      sr.phrases.splice(Math.min(removedIdx, sr.phrases.length), 0, restored);
+                      bumpSidePhraseVersion(sr);
+                    },
+                    redo() {
+                      removePhraseById_noUndo(pairId, side, removedSnapshot.id);
+                    },
+                    redoFocusPairId: pairId,
+                    redoFocusSide: side,
+                    redoFocusPhraseId: existing.id,
+                  });
                   return;
                 }
                 setStatus('That phrase already exists under a different topic/subtopic. Reclassify it instead.', 'warn');
@@ -2609,6 +2804,25 @@
               bumpSidePhraseVersion(sideRow);
               if (!phraseInReason(next, sideRow.reason)) setStatus('Edited phrase is not found in the reason text.', 'warn');
               else setStatus('Phrase edited.', 'good');
+              pushUndo({
+                type: 'edit',
+                description: `Edited "${_truncate(oldPhrase)}" → "${_truncate(next)}"`,
+                focusPairId: pairId,
+                focusSide: side,
+                focusPhraseId: phraseId,
+                undo() {
+                  const sr = getSide(pairId, side);
+                  if (!sr) return;
+                  const p = findPhraseById(sr, phraseId);
+                  if (p) { p.phrase = oldPhrase; p.modified = true; bumpSidePhraseVersion(sr); }
+                },
+                redo() {
+                  const sr = getSide(pairId, side);
+                  if (!sr) return;
+                  const p = findPhraseById(sr, phraseId);
+                  if (p) { p.phrase = next; p.modified = true; bumpSidePhraseVersion(sr); }
+                },
+              });
             }
           }
           phrase.editing = false;
@@ -3023,6 +3237,8 @@
           const existing = findPhraseByText(sideRow, text, options.excludeId || null);
           if (existing) {
             const moved = existing.topic !== topic || existing.subtopic !== subtopic;
+            const oldTopic = existing.topic;
+            const oldSubtopic = existing.subtopic;
             existing.topic = topic;
             existing.subtopic = subtopic;
             existing.modified = true;
@@ -3031,6 +3247,27 @@
             if (!options.suppressStatus) {
               if (moved) setStatus('Existing phrase reclassified.', 'good');
               else setStatus('Phrase already exists.', 'info');
+            }
+            if (moved && !options._noUndo) {
+              pushUndo({
+                type: 'reclassify',
+                description: `Reclassified "${_truncate(text)}" → ${_truncate(subtopic, 20)}`,
+                focusPairId: pairId,
+                focusSide: side,
+                focusPhraseId: existing.id,
+                undo() {
+                  const sr = getSide(pairId, side);
+                  if (!sr) return;
+                  const p = findPhraseById(sr, existing.id);
+                  if (p) { p.topic = oldTopic; p.subtopic = oldSubtopic; p.modified = true; bumpSidePhraseVersion(sr); }
+                },
+                redo() {
+                  const sr = getSide(pairId, side);
+                  if (!sr) return;
+                  const p = findPhraseById(sr, existing.id);
+                  if (p) { p.topic = topic; p.subtopic = subtopic; p.modified = true; bumpSidePhraseVersion(sr); }
+                },
+              });
             }
             return existing;
           }
@@ -3051,6 +3288,28 @@
             if (!phraseInReason(text, sideRow.reason)) setStatus('Added phrase, but it is not found in the reason text.', 'warn');
             else setStatus('Phrase added.', 'good');
           }
+          if (!options._noUndo) {
+            pushUndo({
+              type: 'add',
+              description: `Added "${_truncate(text)}"`,
+              focusPairId: pairId,
+              focusSide: side,
+              focusPhraseId: phrase.id,
+              undo() {
+                removePhraseById_noUndo(pairId, side, phrase.id);
+              },
+              redo() {
+                const sr = getSide(pairId, side);
+                if (!sr) return;
+                const restored = { id: phrase.id, phrase: text, topic, subtopic, editing: false, selected: false, modified: true };
+                sr.phrases.push(restored);
+                bumpSidePhraseVersion(sr);
+              },
+              redoFocusPairId: pairId,
+              redoFocusSide: side,
+              redoFocusPhraseId: phrase.id,
+            });
+          }
           return phrase;
         }
 
@@ -3067,12 +3326,35 @@
           const phrase = findPhraseById(sideRow, phraseId);
           if (!phrase) return;
           const moved = phrase.topic !== topic || phrase.subtopic !== subtopic;
+          const oldTopic = phrase.topic;
+          const oldSubtopic = phrase.subtopic;
           phrase.topic = topic;
           phrase.subtopic = subtopic;
           phrase.modified = true;
           if (moved) bumpSidePhraseVersion(sideRow);
           selectPhrase(fromPairId, fromSide, phrase.id, null);
           setStatus('Phrase moved.', 'good');
+          if (moved) {
+            pushUndo({
+              type: 'move',
+              description: `Moved "${_truncate(phrase.phrase)}" → ${_truncate(subtopic, 20)}`,
+              focusPairId: fromPairId,
+              focusSide: fromSide,
+              focusPhraseId: phraseId,
+              undo() {
+                const sr = getSide(fromPairId, fromSide);
+                if (!sr) return;
+                const p = findPhraseById(sr, phraseId);
+                if (p) { p.topic = oldTopic; p.subtopic = oldSubtopic; p.modified = true; bumpSidePhraseVersion(sr); }
+              },
+              redo() {
+                const sr = getSide(fromPairId, fromSide);
+                if (!sr) return;
+                const p = findPhraseById(sr, phraseId);
+                if (p) { p.topic = topic; p.subtopic = subtopic; p.modified = true; bumpSidePhraseVersion(sr); }
+              },
+            });
+          }
         }
 
         function moveSelectedChipToSubtopic(pairId, side, topic, subtopic) {
@@ -3317,13 +3599,38 @@
             return;
           }
 
+          const oldText = phrase.phrase;
           const visibleCount = drag.visibleCount;
           const existing = findPhraseByText(sideRow, nextText, phrase.id);
           if (visibleCount <= 1) {
             if (existing) {
-              removePhraseById(drag.pairId, drag.side, phrase.id, false);
+              // Resize merges into existing — record combined undo
+              const removedSnapshot = { ...phrase, editing: false, selected: false };
+              const removedIdx = sideRow.phrases.findIndex(p => p.id === phrase.id);
+              removePhraseById_noUndo(drag.pairId, drag.side, phrase.id);
               selectPhraseOccurrenceByRange(drag.pairId, drag.side, existing.id, range.start, range.end);
               setStatus('Phrase resized by reusing the existing phrase.', 'good');
+              pushUndo({
+                type: 'resize-merge',
+                description: `Resized "${_truncate(oldText)}" → merged`,
+                focusPairId: drag.pairId,
+                focusSide: drag.side,
+                focusPhraseId: removedSnapshot.id,
+                undo() {
+                  const sr = getSide(drag.pairId, drag.side);
+                  if (!sr) return;
+                  const restored = { ...removedSnapshot };
+                  delete restored._draft;
+                  sr.phrases.splice(Math.min(removedIdx, sr.phrases.length), 0, restored);
+                  bumpSidePhraseVersion(sr);
+                },
+                redo() {
+                  removePhraseById_noUndo(drag.pairId, drag.side, removedSnapshot.id);
+                },
+                redoFocusPairId: drag.pairId,
+                redoFocusSide: drag.side,
+                redoFocusPhraseId: existing.id,
+              });
               return;
             }
             phrase.phrase = nextText;
@@ -3331,12 +3638,53 @@
             bumpSidePhraseVersion(sideRow);
             selectPhraseOccurrenceByRange(drag.pairId, drag.side, phrase.id, range.start, range.end);
             setStatus('Phrase resized.', 'good');
+            pushUndo({
+              type: 'resize',
+              description: `Resized "${_truncate(oldText)}" → "${_truncate(nextText)}"`,
+              focusPairId: drag.pairId,
+              focusSide: drag.side,
+              focusPhraseId: phrase.id,
+              undo() {
+                const sr = getSide(drag.pairId, drag.side);
+                if (!sr) return;
+                const p = findPhraseById(sr, phrase.id);
+                if (p) { p.phrase = oldText; p.modified = true; bumpSidePhraseVersion(sr); }
+              },
+              redo() {
+                const sr = getSide(drag.pairId, drag.side);
+                if (!sr) return;
+                const p = findPhraseById(sr, phrase.id);
+                if (p) { p.phrase = nextText; p.modified = true; bumpSidePhraseVersion(sr); }
+              },
+            });
             return;
           }
 
-          const target = existing || upsertPhrase(drag.pairId, drag.side, phrase.topic, phrase.subtopic, nextText, { suppressStatus: true, silentSelect: true });
+          const target = existing || upsertPhrase(drag.pairId, drag.side, phrase.topic, phrase.subtopic, nextText, { suppressStatus: true, silentSelect: true, _noUndo: true });
           selectPhraseOccurrenceByRange(drag.pairId, drag.side, target.id, range.start, range.end);
           setStatus(existing ? 'Existing phrase reused for the resized occurrence.' : 'Created a new phrase from the resized occurrence.', 'good');
+          if (!existing && target) {
+            // New phrase was created for the multi-occurrence case
+            pushUndo({
+              type: 'resize-split',
+              description: `Split resize → new "${_truncate(nextText)}"`,
+              focusPairId: drag.pairId,
+              focusSide: drag.side,
+              focusPhraseId: target.id,
+              undo() {
+                removePhraseById_noUndo(drag.pairId, drag.side, target.id);
+              },
+              redo() {
+                const sr = getSide(drag.pairId, drag.side);
+                if (!sr) return;
+                sr.phrases.push({ id: target.id, phrase: nextText, topic: phrase.topic, subtopic: phrase.subtopic, editing: false, selected: false, modified: true });
+                bumpSidePhraseVersion(sr);
+              },
+              redoFocusPairId: drag.pairId,
+              redoFocusSide: drag.side,
+              redoFocusPhraseId: target.id,
+            });
+          }
         }
 
         function performReasonBoundaryDragUpdate(clientX, clientY) {
@@ -3454,6 +3802,8 @@
             clearPhraseSelection();
             clearTextSelection();
             closeContextMenu();
+            _undoStack.length = 0;
+            _redoStack.length = 0;
             setStatus(`Loaded ${rows.length} rows.`, 'good');
           } catch (err) {
             console.error(err);
@@ -3478,6 +3828,8 @@
             clearPhraseSelection();
             clearTextSelection();
             closeContextMenu();
+            _undoStack.length = 0;
+            _redoStack.length = 0;
             setStatus(`Loaded ${rows.length} rows from Google Sheets.`, 'good');
           } catch (err) {
             console.error(err);
@@ -3589,6 +3941,10 @@
           if (_infoTipEl && _infoTipEl.parentNode) {
             _infoTipEl.parentNode.removeChild(_infoTipEl);
             _infoTipEl = null;
+          }
+          if (_toastEl && _toastEl.parentNode) {
+            _toastEl.parentNode.removeChild(_toastEl);
+            _toastEl = null;
           }
         });
 
