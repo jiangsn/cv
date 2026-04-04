@@ -4334,7 +4334,7 @@
                   <button class="btn primary" @click="loadFromUrl" :disabled="state.loading">{{ state.loading ? 'Loading...' : 'Load Google Sheet' }}</button>
                   <button class="btn primary" style="background:#059669;border-color:#059669;" @click="openSaveConfirm" :disabled="!state.pairs.length || state.saving">{{ state.saving ? 'Saving...' : 'Save to Sheet' }}</button>
                   <button class="btn" @click="downloadCsv" :disabled="!state.pairs.length">Export CSV</button>
-                  <button class="btn" @click="copyCsvToClipboard" :disabled="!state.pairs.length">Copy for Sheet</button>
+                  <button class="btn" @click="copyCsvToClipboard" :disabled="!state.pairs.length">Copy to Clipboard</button>
                   <button class="btn icon-btn" @click="openConfig" title="Configuration">⚙️</button>
                 </div>
               </div>
