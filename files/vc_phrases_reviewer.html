@@ -869,6 +869,27 @@
       padding-right: 30px;
     }
 
+    .field-search-counter {
+      position: absolute;
+      right: 56px;
+      bottom: 12px;
+      font-size: 11px;
+      color: #94a3b8;
+      font-weight: 600;
+      pointer-events: none;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      z-index: 1;
+    }
+
+    .field-search-counter.has-match {
+      color: #2563eb;
+    }
+
+    .field-search-counter.no-match {
+      color: #dc2626;
+    }
+
     .field-help-btn {
       position: absolute;
       right: 6px;
@@ -2178,6 +2199,7 @@
             sourceChip: null,
           },
           copiedPhraseKey: '',
+          searchIndex: -1,
           filterHidden: false,
           filterFloating: false,
           filterHeight: 0,
@@ -2225,7 +2247,7 @@
             return;
           }
           if (y < 32) state.filterHidden = false;
-          else if (y > state.lastScrollY + 10) state.filterHidden = true;
+          else if (y > state.lastScrollY + 10 && !state._suppressFilterHide) state.filterHidden = true;
           else if (y < state.lastScrollY - 10) state.filterHidden = false;
           state.lastScrollY = y;
           state._scrollRaf = 0;
@@ -2286,6 +2308,122 @@
           const topic = state.contextMenu.activeTopic;
           return topic ? [...(TOPIC_META[topic] || ['Others'])] : [];
         });
+
+        // ── Search navigation (find-like x/N + Enter to jump) ────────
+        // Extract positive (non-negated) leaf tokens from AST
+        function _collectPositiveTokens(ast) {
+          if (!ast) return [];
+          switch (ast.type) {
+            case 'token': return [ast];
+            case 'not': return []; // negated tokens are not "search targets"
+            case 'and':
+            case 'or':
+              return ast.children.flatMap(c => _collectPositiveTokens(c));
+            default: return [];
+          }
+        }
+
+        function _phraseMatchesAnyToken(phraseText, tokens) {
+          const lower = String(phraseText || '').toLowerCase();
+          return tokens.some(tok => {
+            if (tok.exact) return _getExactRegex(tok.value).test(lower);
+            return lower.includes(tok.value);
+          });
+        }
+
+        // Flat list of all matching phrases in display order: [{pairId, side, phraseId}, ...]
+        const searchMatches = computed(() => {
+          const ast = parseFilterExpr(filters.phrase);
+          if (!ast) return [];
+          const tokens = _collectPositiveTokens(ast);
+          if (!tokens.length) return [];
+          const out = [];
+          for (const item of filteredPairs.value) {
+            const pair = item.pair;
+            for (const sideKey of ['more', 'less']) {
+              if (sideKey === 'more' && !item.showMore) continue;
+              if (sideKey === 'less' && !item.showLess) continue;
+              const sideRow = pair[sideKey];
+              // Respect topic/subtopic filters
+              for (const p of sideRow.phrases) {
+                if (filters.topic && p.topic !== filters.topic) continue;
+                if (filters.subtopic && p.subtopic !== filters.subtopic) continue;
+                if (_phraseMatchesAnyToken(p.phrase, tokens)) {
+                  out.push({ pairId: pair.pairId, side: sideKey, phraseId: p.id });
+                }
+              }
+            }
+          }
+          return out;
+        });
+
+        const searchTotal = computed(() => searchMatches.value.length);
+
+        // searchIndex: -1 means no active navigation yet, 0..N-1 = current match
+        // Reset to -1 when filter text or matches change
+        watch(() => filters.phrase, () => { state.searchIndex = -1; });
+        watch(searchTotal, () => {
+          if (state.searchIndex >= searchTotal.value) state.searchIndex = -1;
+        });
+
+        const searchDisplayIndex = computed(() => {
+          if (state.searchIndex < 0 || !searchTotal.value) return 0;
+          return state.searchIndex + 1;
+        });
+
+        function isSearchHighlighted(pairId, side, phraseId) {
+          if (state.searchIndex < 0) return false;
+          const match = searchMatches.value[state.searchIndex];
+          return match && match.pairId === pairId && match.side === side && match.phraseId === phraseId;
+        }
+
+        function _scrollToChip(pairId, side, phraseId) {
+          nextTick(() => {
+            let target = null;
+            if (filters.showPhrases) {
+              const sideKey = `${pairId}__${side}`;
+              const sideEl = document.querySelector(`[data-side-key="${CSS.escape(sideKey)}"]`);
+              if (sideEl) target = sideEl.querySelector(`.chip[data-phrase-id="${CSS.escape(phraseId)}"]`);
+            }
+            if (!target) {
+              // Fallback: find the phrase span in the reason box
+              const reasonBox = getReasonBoxEl(pairId, side);
+              if (reasonBox) target = reasonBox.querySelector(`.reason-phrase[data-phrase-id="${CSS.escape(phraseId)}"]`);
+            }
+            if (target) {
+              target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+          });
+        }
+
+        function navigateSearch(delta) {
+          const total = searchTotal.value;
+          if (!total) return;
+          let next;
+          if (state.searchIndex < 0) {
+            next = delta > 0 ? 0 : total - 1;
+          } else {
+            next = (state.searchIndex + delta + total) % total;
+          }
+          state.searchIndex = next;
+          const match = searchMatches.value[next];
+          if (match) {
+            selectPhrase(match.pairId, match.side, match.phraseId, null);
+            state.filterHidden = false;
+            state._suppressFilterHide = true;
+            _scrollToChip(match.pairId, match.side, match.phraseId);
+            // Allow scroll-hide again after the smooth scroll settles
+            clearTimeout(state._suppressFilterHideTimer);
+            state._suppressFilterHideTimer = setTimeout(() => { state._suppressFilterHide = false; }, 600);
+          }
+        }
+
+        function onSearchKeydown(e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            navigateSearch(e.shiftKey ? -1 : 1);
+          }
+        }
 
         function clearNativeSelection() {
           const sel = window.getSelection?.();
@@ -2676,7 +2814,7 @@
 <strong>!</strong> = NOT &nbsp; <code>!overlap color</code> → has "color" but not "overlap"<br>
 <strong>"…"</strong> = exact &nbsp; <code>"simple"</code> → won't match "simpler"<br>
 <strong>( )</strong> = grouping &nbsp; <code>(red | blue) !dark</code><br>
-<span style="color:#64748b;">Precedence: ! &gt; AND &gt; OR. Parentheses override.<br>Quotes treat <code style="color:#94a3b8;">! | ( )</code> inside as literal text.</span>
+<span style="color:#64748b;">Precedence: ! &gt; AND &gt; OR. Parentheses override.<br>Quotes treat <code style="color:#94a3b8;">! | ( )</code> inside as literal text.<br><strong style="color:#93c5fd;">Enter</strong> = next match · <strong style="color:#93c5fd;">Shift+Enter</strong> = previous</span>
 </div>`;
           _openInfoTipWithHtml(html, e.currentTarget);
         }
@@ -3519,6 +3657,10 @@
           showInfoTip,
           hideInfoTip,
           showSearchHelpTip,
+          searchTotal,
+          searchDisplayIndex,
+          navigateSearch,
+          onSearchKeydown,
         };
       },
       template: `
@@ -3570,7 +3712,9 @@
               </div>
               <div class="field field-with-help">
                 <label>Phrase Search</label>
-                <input v-model="filters.phrase" placeholder="e.g. color | !simple text" :style="{ paddingRight: filters.phrase ? '54px' : '30px' }" />
+                <input v-model="filters.phrase" placeholder="e.g. color | !simple text" @keydown="onSearchKeydown" :style="{ paddingRight: filters.phrase ? '106px' : '30px' }" />
+                <span v-if="filters.phrase && searchTotal > 0" class="field-search-counter has-match">{{ searchDisplayIndex }}/{{ searchTotal }}</span>
+                <span v-else-if="filters.phrase" class="field-search-counter no-match">0/0</span>
                 <span v-if="filters.phrase" class="field-clear-btn" @click.stop="filters.phrase = ''" title="Clear">×</span>
                 <span class="field-help-btn" @click.stop="showSearchHelpTip($event)" title="Search syntax help">?</span>
               </div>
